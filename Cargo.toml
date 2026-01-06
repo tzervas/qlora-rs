@@ -1,0 +1,40 @@
+[package]
+name = "qlora-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "4-bit quantized LoRA (QLoRA) implementation with GGUF export for Rust"
+repository = "https://github.com/youruser/qlora-rs"
+keywords = ["qlora", "quantization", "lora", "4bit", "gguf"]
+categories = ["science", "machine-learning"]
+
+[dependencies]
+candle-core.workspace = true
+candle-nn.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# Local workspace dependency
+peft-rs = { path = "../peft-rs" }
+
+# GGUF support
+# gguf-rs = "0.1"  # Uncomment when available
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+anyhow.workspace = true
+
+[features]
+default = []
+cuda = ["candle-core/cuda", "peft-rs/cuda"]
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "quantization"
+harness = false
