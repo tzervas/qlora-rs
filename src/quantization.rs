@@ -5,7 +5,7 @@
 //!
 //! Reference: <https://arxiv.org/abs/2305.14314> (QLoRA paper)
 
-use candle_core::{DType, Device, Tensor};
+use candle_core::{Device, DType, Tensor};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{QLoraError, Result};
@@ -13,10 +13,22 @@ use crate::error::{QLoraError, Result};
 /// The 16 quantization levels for NF4, optimized for N(0,1) distribution.
 /// These values minimize expected quantization error for normally-distributed data.
 pub const NF4_LEVELS: [f32; 16] = [
-    -1.0, -0.6961928009986877, -0.5250730514526367, -0.39491748809814453,
-    -0.28444138169288635, -0.18477343022823334, -0.09105003625154495, 0.0,
-    0.07958029955625534, 0.16093020141124725, 0.24611230194568634, 0.33791524171829224,
-    0.44070982933044434, 0.5626170039176941, 0.7229568362236023, 1.0,
+    -1.0,
+    -0.696_192_800_998_688,
+    -0.525_073_051_452_637,
+    -0.394_917_488_098_145,
+    -0.284_441_381_692_887,
+    -0.184_773_430_228_233,
+    -0.091_050_036_251_545,
+    0.0,
+    0.079_580_299_556_255,
+    0.160_930_201_411_247,
+    0.246_112_301_945_686,
+    0.337_915_241_718_292,
+    0.440_709_829_330_444,
+    0.562_617_003_917_694,
+    0.722_956_836_223_602,
+    1.0,
 ];
 
 /// Configuration for quantization.
@@ -24,10 +36,10 @@ pub const NF4_LEVELS: [f32; 16] = [
 pub struct QuantizationConfig {
     /// Block size for quantization (number of values sharing a scale).
     pub block_size: usize,
-    
+
     /// Whether to use double quantization (quantize the scales).
     pub double_quant: bool,
-    
+
     /// Data type for computation (usually bf16 or f16).
     pub compute_dtype: ComputeDType,
 }
@@ -163,17 +175,13 @@ pub fn dequantize_nf4(quantized: &QuantizedTensor, device: &Device) -> Result<Te
         for i in 0..quantized.block_size {
             let byte_idx = start_byte + i / 2;
             let byte = quantized.data[byte_idx];
-            let code = if i % 2 == 0 {
-                byte & 0x0F
-            } else {
-                byte >> 4
-            };
+            let code = if i % 2 == 0 { byte & 0x0F } else { byte >> 4 };
             let value = NF4_LEVELS[code as usize] * scale;
             output.push(value);
         }
     }
 
-    let tensor = Tensor::from_vec(output, &quantized.shape, device)?;
+    let tensor = Tensor::from_vec(output, quantized.shape.clone(), device)?;
     Ok(tensor)
 }
 
@@ -209,7 +217,7 @@ mod tests {
     fn test_quantize_dequantize_roundtrip() {
         let device = Device::Cpu;
         let original = Tensor::randn(0.0f32, 1.0, (64,), &device).unwrap();
-        
+
         let quantized = quantize_nf4(&original, 64).unwrap();
         let restored = dequantize_nf4(&quantized, &device).unwrap();
 
@@ -227,7 +235,7 @@ mod tests {
     fn test_quantize_preserves_shape() {
         let device = Device::Cpu;
         let original = Tensor::zeros(&[32, 64], DType::F32, &device).unwrap();
-        
+
         let quantized = quantize_nf4(&original, 64).unwrap();
         let restored = dequantize_nf4(&quantized, &device).unwrap();
 

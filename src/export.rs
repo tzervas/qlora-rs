@@ -9,7 +9,7 @@ use crate::error::{QLoraError, Result};
 use crate::quantization::QuantizedTensor;
 
 /// GGUF file magic number.
-const GGUF_MAGIC: u32 = 0x46554747; // "GGUF"
+const GGUF_MAGIC: u32 = 0x4655_4747; // "GGUF"
 
 /// GGUF version.
 const GGUF_VERSION: u32 = 3;
@@ -50,11 +50,7 @@ pub fn export_gguf<P: AsRef<Path>>(
     Ok(())
 }
 
-fn write_tensor_info<W: Write>(
-    writer: &mut W,
-    name: &str,
-    tensor: &QuantizedTensor,
-) -> Result<()> {
+fn write_tensor_info<W: Write>(writer: &mut W, name: &str, tensor: &QuantizedTensor) -> Result<()> {
     // Name length and name
     let name_bytes = name.as_bytes();
     writer.write_all(&(name_bytes.len() as u64).to_le_bytes())?;
@@ -81,11 +77,11 @@ fn write_tensor_info<W: Write>(
 ///
 /// This dequantizes the base, merges LoRA, and re-quantizes.
 /// Useful for deployment without LoRA overhead.
-pub fn merge_and_export_gguf<P: AsRef<Path>>(
-    _output_path: P,
-) -> Result<()> {
+pub fn merge_and_export_gguf<P: AsRef<Path>>(_output_path: P) -> Result<()> {
     // TODO: Implement merge + export
-    Err(QLoraError::GgufExport("merge_and_export not yet implemented".into()))
+    Err(QLoraError::GgufExport(
+        "merge_and_export not yet implemented".into(),
+    ))
 }
 
 #[cfg(test)]
