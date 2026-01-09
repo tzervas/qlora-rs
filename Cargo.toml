@@ -4,13 +4,21 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.70"
 license = "MIT"
-authors = ["QLoRA Rust Contributors"]
+authors = ["Tyler Zervas <tz-dev@vectorweight.com>"]
 description = "4-bit quantized LoRA (QLoRA) implementation with dual GGUF and Candle native export for Rust"
 repository = "https://github.com/tzervas/qlora-rs"
+homepage = "https://github.com/tzervas/qlora-rs"
 documentation = "https://docs.rs/qlora-rs"
-keywords = ["qlora", "quantization", "lora", "4bit", "gguf", "inference", "fine-tuning"]
-categories = ["science", "machine-learning"]
+keywords = ["qlora", "quantization", "lora", "4bit", "gguf"]
+categories = ["science", "algorithms"]
 readme = "README.md"
+exclude = [
+    ".github/*",
+    "benches/*",
+    "tests/*",
+    "*.md",
+    "!README.md",
+]
 
 [dependencies]
 candle-core = "0.9"
@@ -21,8 +29,10 @@ thiserror = "1.0"
 tracing = "0.1"
 anyhow = "1.0"
 
-# Local workspace dependency
-peft-rs = { path = "../peft-rs" }
+# peft-rs dependency - use local path for development, crates.io for publication
+# When publishing to crates.io, update to: peft-rs = "0.4"
+# For now, using path dependency (blocks crates.io publish until peft-rs is published)
+peft-rs = { path = "../peft-rs", version = "0.4" }
 
 # GGUF support (for future: gguf = "0.1")
 byteorder = "1.5"
