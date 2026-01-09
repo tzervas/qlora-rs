@@ -29,10 +29,8 @@ thiserror = "1.0"
 tracing = "0.1"
 anyhow = "1.0"
 
-# peft-rs dependency - use local path for development, crates.io for publication
-# When publishing to crates.io, update to: peft-rs = "0.4"
-# For now, using path dependency (blocks crates.io publish until peft-rs is published)
-peft-rs = { path = "../peft-rs", version = "0.4" }
+# peft-rs dependency - now published on crates.io
+peft-rs = "0.4"
 
 # GGUF support (for future: gguf = "0.1")
 byteorder = "1.5"
