@@ -5,7 +5,7 @@
 //!
 //! Reference: <https://arxiv.org/abs/2305.14314> (QLoRA paper)
 
-use candle_core::{Device, DType, Tensor};
+use candle_core::{Device, Tensor};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{QLoraError, Result};
@@ -205,6 +205,7 @@ fn quantize_value_nf4(value: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::DType;
 
     #[test]
     fn test_nf4_levels_sorted() {
