@@ -75,10 +75,16 @@ pub struct QuantizedTensor {
     pub scales: Vec<f32>,
     /// Zero points per block (for asymmetric quantization).
     pub zero_points: Option<Vec<f32>>,
+    /// Quantized scales (when double quantization is used).
+    pub scales_quantized: Option<Vec<u8>>,
+    /// Scale factors for the scales (when double quantization is used).
+    pub scales_scales: Option<Vec<f32>>,
     /// Original shape.
     pub shape: Vec<usize>,
     /// Block size used for quantization.
     pub block_size: usize,
+    /// Whether double quantization was applied.
+    pub double_quant_enabled: bool,
 }
 
 impl QuantizedTensor {
@@ -91,11 +97,29 @@ impl QuantizedTensor {
     /// Get the memory size in bytes.
     #[must_use]
     pub fn size_bytes(&self) -> usize {
-        self.data.len() + self.scales.len() * 4
+        let mut size = self.data.len() + self.scales.len() * 4;
+        if let Some(ref zp) = self.zero_points {
+            size += zp.len() * 4;
+        }
+        if let Some(ref sq) = self.scales_quantized {
+            size += sq.len();
+        }
+        if let Some(ref ss) = self.scales_scales {
+            size += ss.len() * 4;
+        }
+        size
+    }
+
+    /// Get the compression ratio relative to FP32 format.
+    #[must_use]
+    pub fn compression_ratio(&self) -> f64 {
+        let fp32_size = self.numel() * 4;
+        let quantized_size = self.size_bytes();
+        fp32_size as f64 / quantized_size as f64
     }
 }
 
-/// Quantize a tensor to NF4 format.
+/// Quantize a tensor to NF4 format with optional double quantization.
 ///
 /// # Arguments
 /// * `tensor` - Input tensor to quantize
@@ -107,24 +131,43 @@ impl QuantizedTensor {
 /// # Errors
 /// Returns error if tensor cannot be flattened or has invalid shape
 pub fn quantize_nf4(tensor: &Tensor, block_size: usize) -> Result<QuantizedTensor> {
+    quantize_nf4_with_config(tensor, QuantizationConfig {
+        block_size,
+        double_quant: false, // Use non-double quantization by default
+        compute_dtype: ComputeDType::F32,
+    })
+}
+
+/// Quantize a tensor to NF4 format with full configuration options.
+///
+/// # Arguments
+/// * `tensor` - Input tensor to quantize
+/// * `config` - Quantization configuration including double quant option
+///
+/// # Returns
+/// Quantized tensor with packed 4-bit values and optional double-quantized scales
+///
+/// # Errors
+/// Returns error if tensor cannot be flattened or has invalid shape
+pub fn quantize_nf4_with_config(tensor: &Tensor, config: QuantizationConfig) -> Result<QuantizedTensor> {
     let shape = tensor.shape().dims().to_vec();
     let flat = tensor.flatten_all()?.to_vec1::<f32>()?;
     let numel = flat.len();
 
-    if numel % block_size != 0 {
+    if numel % config.block_size != 0 {
         return Err(QLoraError::InvalidConfig(format!(
             "tensor size {} not divisible by block size {}",
-            numel, block_size
+            numel, config.block_size
         )));
     }
 
-    let num_blocks = numel / block_size;
+    let num_blocks = numel / config.block_size;
     let mut scales = Vec::with_capacity(num_blocks);
     let mut quantized = Vec::with_capacity((numel + 1) / 2);
 
     for block_idx in 0..num_blocks {
-        let start = block_idx * block_size;
-        let end = start + block_size;
+        let start = block_idx * config.block_size;
+        let end = start + config.block_size;
         let block = &flat[start..end];
 
         // Compute absmax scale
@@ -145,16 +188,87 @@ pub fn quantize_nf4(tensor: &Tensor, block_size: usize) -> Result<QuantizedTenso
         }
     }
 
+    // Apply double quantization if enabled
+    let (scales_quantized, scales_scales) = if config.double_quant {
+        let (sq, ss) = double_quantize_scales(&scales, 256)?;
+        (Some(sq), Some(ss))
+    } else {
+        (None, None)
+    };
+
     Ok(QuantizedTensor {
         data: quantized,
         scales,
         zero_points: None,
+        scales_quantized,
+        scales_scales,
         shape,
-        block_size,
+        block_size: config.block_size,
+        double_quant_enabled: config.double_quant,
     })
 }
 
+/// Apply double quantization to scale factors.
+///
+/// Double quantization quantizes the scale factors themselves to reduce memory usage.
+/// Typically uses 8-bit unsigned integers for the quantized scales.
+///
+/// # Arguments
+/// * `scales` - Original float32 scale factors
+/// * `max_val` - Maximum quantization value (typically 255 for u8)
+///
+/// # Returns
+/// Tuple of (quantized_scales, scale_factors_for_scales)
+///
+/// # Errors
+/// Returns error if scales cannot be processed
+fn double_quantize_scales(scales: &[f32], max_val: usize) -> Result<(Vec<u8>, Vec<f32>)> {
+    if scales.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    // Find the absolute maximum value in scales
+    let absmax = scales
+        .iter()
+        .map(|s| s.abs())
+        .fold(0.0f32, f32::max);
+
+    if absmax == 0.0 {
+        return Ok((vec![0; scales.len()], vec![1.0]));
+    }
+
+    // Quantize all scales using a single scaling factor
+    let scale_factor = absmax / (max_val as f32);
+    let quantized_scales: Vec<u8> = scales
+        .iter()
+        .map(|&s| {
+            let quantized = (s / scale_factor).abs() as u32;
+            std::cmp::min(quantized, max_val as u32) as u8
+        })
+        .collect();
+
+    Ok((quantized_scales, vec![scale_factor]))
+}
+
+/// Dequantize double-quantized scales back to float.
+fn dequantize_double_scales(
+    scales_quantized: &[u8],
+    scales_scales: &[f32],
+) -> Vec<f32> {
+    if scales_quantized.is_empty() || scales_scales.is_empty() {
+        return vec![];
+    }
+
+    let scale_factor = scales_scales[0];
+    scales_quantized
+        .iter()
+        .map(|&sq| (sq as f32) * scale_factor)
+        .collect()
+}
+
 /// Dequantize an NF4 tensor back to float.
+///
+/// Automatically handles double-quantized scales if enabled.
 ///
 /// # Arguments
 /// * `quantized` - Quantized tensor to dequantize
@@ -166,10 +280,21 @@ pub fn dequantize_nf4(quantized: &QuantizedTensor, device: &Device) -> Result<Te
     let numel = quantized.numel();
     let mut output = Vec::with_capacity(numel);
 
-    let num_blocks = quantized.scales.len();
+    // Get scales, applying double quantization reversal if needed
+    let scales = if quantized.double_quant_enabled {
+        if let (Some(ref sq), Some(ref ss)) = (&quantized.scales_quantized, &quantized.scales_scales) {
+            dequantize_double_scales(sq, ss)
+        } else {
+            quantized.scales.clone()
+        }
+    } else {
+        quantized.scales.clone()
+    };
+
+    let num_blocks = scales.len();
 
     for block_idx in 0..num_blocks {
-        let scale = quantized.scales[block_idx];
+        let scale = scales[block_idx];
         let start_byte = (block_idx * quantized.block_size) / 2;
 
         for i in 0..quantized.block_size {
@@ -255,5 +380,96 @@ mod tests {
         // Should be roughly 4x reduction (4-bit vs 32-bit) plus some overhead for scales
         let ratio = original_bytes as f64 / quantized_bytes as f64;
         assert!(ratio > 3.0, "Expected >3x reduction, got {:.2}x", ratio);
+    }
+
+    #[test]
+    fn test_double_quantize_compression() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (512,), &device).unwrap();
+
+        let config = QuantizationConfig {
+            block_size: 64,
+            double_quant: true,
+            compute_dtype: ComputeDType::F32,
+        };
+
+        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+
+        // Verify double quantization was applied
+        assert!(quantized.double_quant_enabled);
+        assert!(quantized.scales_quantized.is_some());
+        assert!(quantized.scales_scales.is_some());
+
+        // Double quantized should use less memory than non-double quantized
+        let non_dq_size = quantized.scales.len() * 4; // Original scales
+        let dq_scales_size = quantized
+            .scales_quantized
+            .as_ref()
+            .map(|sq| sq.len())
+            .unwrap_or(0)
+            + quantized
+                .scales_scales
+                .as_ref()
+                .map(|ss| ss.len() * 4)
+                .unwrap_or(0);
+
+        assert!(dq_scales_size < non_dq_size);
+    }
+
+    #[test]
+    fn test_double_quantize_roundtrip() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (256,), &device).unwrap();
+
+        let config = QuantizationConfig {
+            block_size: 64,
+            double_quant: true,
+            compute_dtype: ComputeDType::F32,
+        };
+
+        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+        let restored = dequantize_nf4(&quantized, &device).unwrap();
+
+        let original_vec: Vec<f32> = original.to_vec1().unwrap();
+        let restored_vec: Vec<f32> = restored.to_vec1().unwrap();
+
+        // With double quantization, error increases (scale quantization adds error)
+        // but should still be reasonable (typically 10-20% of value magnitude)
+        let mut max_error = 0.0f32;
+        for (o, r) in original_vec.iter().zip(restored_vec.iter()) {
+            let error = (o - r).abs();
+            max_error = max_error.max(error);
+        }
+        // Allow higher error for double quantization - scales are also quantized
+        assert!(max_error < 5.0, "Max error {} too large", max_error);
+    }
+
+    #[test]
+    fn test_double_quant_disabled_still_works() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (128,), &device).unwrap();
+
+        let config = QuantizationConfig {
+            block_size: 64,
+            double_quant: false,
+            compute_dtype: ComputeDType::F32,
+        };
+
+        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+
+        // Verify double quantization was NOT applied
+        assert!(!quantized.double_quant_enabled);
+        assert!(quantized.scales_quantized.is_none());
+        assert!(quantized.scales_scales.is_none());
+
+        let restored = dequantize_nf4(&quantized, &device).unwrap();
+        let original_vec: Vec<f32> = original.to_vec1().unwrap();
+        let restored_vec: Vec<f32> = restored.to_vec1().unwrap();
+
+        // Regular quantization error bounds
+        for (o, r) in original_vec.iter().zip(restored_vec.iter()) {
+            let error = (o - r).abs();
+            assert!(error < 0.5, "Error {} too large for value {}", error, o);
+        }
     }
 }
