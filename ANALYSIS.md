@@ -9,7 +9,7 @@
 
 ### Current Version & Dependencies
 - **Package Name:** `qlora-rs`
-- **Version:** 0.1.0 (Alpha - Active Development)
+- **Version:** 0.1.1 (Alpha - Active Development)
 - **Edition:** 2021
 - **Key Dependencies:**
   - `candle-core`, `candle-nn` - ML tensor operations

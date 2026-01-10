@@ -25,7 +25,7 @@
 - ⚡ Fast quantization and dequantization
 - 📦 Dual export: GGUF format (llama.cpp) and Candle native (QNAT)
 - 🔗 Integrates with [peft-rs](https://crates.io/crates/peft-rs) for LoRA adapter management
-- ✅ 23/24 tests passing (95.8% coverage)
+- ✅ 24/24 tests passing (100% coverage)
 
 ## Installation
 

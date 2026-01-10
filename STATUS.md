@@ -65,10 +65,10 @@ Working Branch (feature/*) → PR → dev → PR → testing → PR → main (ta
 ```
 
 #### 2. Semantic Versioning Foundation
-- ✅ Version set to `0.1.0` (pre-release)
+- ✅ Version set to `0.1.1` (pre-release)
 - ✅ Cargo.toml properly configured
 - ✅ Release policy documented in DEVELOPMENT.md
-- ✅ Will increment: 0.1.0 → 0.2.0 → ... → 1.0.0 (full feature completion)
+- ✅ Will increment: 0.1.1 → 0.2.0 → ... → 1.0.0 (full feature completion)
 
 #### 3. Dual Export Format Planning
 - ✅ Architecture documented for GGUF (compatibility)
@@ -147,7 +147,7 @@ Working Branch (feature/*) → PR → dev → PR → testing → PR → main (ta
 **Status**: Infrastructure, GGUF, Native Export, and Double Quantization all complete
 
 - [x] Git workflow setup
-- [x] Semantic versioning foundation (0.1.0)
+- [x] Semantic versioning foundation (0.1.1)
 - [x] CI/CD pipeline with 6 automated checks
 - [x] Development guide documentation (DEVELOPMENT.md)
 - [x] Dependency updates for candle-core 0.9
@@ -157,9 +157,11 @@ Working Branch (feature/*) → PR → dev → PR → testing → PR → main (ta
 - [x] Implement double quantization for compression
 - [x] Add format selection API
 - [x] Write comprehensive integration tests
-- [ ] **NEXT**: Phase 1.3 - Advanced Quantization Features
+- [x] Advanced quantization features (per-channel, zero-point)
+- [x] QLoRA batch dimension fix
+- [x] Dual MIT OR Apache-2.0 licensing
 
-**Completed Version**: 0.1.0-alpha.2 ready
+**Completed Version**: 0.1.1 (24/24 tests passing)
 
 ### Phase 1.3: Advanced Quantization Features (Planned)
 

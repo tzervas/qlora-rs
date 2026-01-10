@@ -158,7 +158,7 @@ Closes #15
 
 This project follows [Semantic Versioning 2.0.0](https://semver.org/).
 
-### Current Version: 0.1.0
+### Current Version: 0.1.1
 
 - **0.x.y**: Pre-release development. Breaking changes allowed.
 - **1.0.0**: First stable release (blocked until all Phase features complete).
@@ -167,8 +167,8 @@ This project follows [Semantic Versioning 2.0.0](https://semver.org/).
 
 1. Update `Cargo.toml` version
 2. Update `CHANGELOG.md` with changes
-3. Create annotated git tag: `git tag -a v0.1.0 -m "Release 0.1.0"`
-4. Push tag: `git push origin v0.1.0`
+3. Create annotated git tag: `git tag -a v0.1.1 -m "Release 0.1.1"`
+4. Push tag: `git push origin v0.1.1`
 5. GitHub Actions publishes to crates.io automatically
 
 ## Development Phases
