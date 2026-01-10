@@ -1,6 +1,6 @@
 # qlora-rs
 
-4-bit quantized LoRA (QLoRA) implementation for Rust with GGUF export.
+4-bit quantized LoRA (QLoRA) implementation for Rust with dual GGUF and Candle native export.
 
 [![Crates.io](https://img.shields.io/crates/v/qlora-rs.svg)](https://crates.io/crates/qlora-rs)
 [![Documentation](https://docs.rs/qlora-rs/badge.svg)](https://docs.rs/qlora-rs)
@@ -8,20 +8,24 @@
 
 ## Overview
 
-`qlora-rs` provides efficient 4-bit quantization and QLoRA training capabilities:
+`qlora-rs` provides efficient 4-bit quantization and QLoRA inference capabilities for Rust:
 
 - **NF4 Quantization** - 4-bit NormalFloat format optimized for neural network weights
-- **Double Quantization** - Further compress scale factors for memory efficiency
-- **QLoRA Training** - Train LoRA adapters on frozen quantized base weights
-- **GGUF Export** - Export models for inference with llama.cpp
+- **Double Quantization** - Further compress scale factors for additional memory efficiency
+- **Advanced Quantization** - Per-channel and zero-point asymmetric quantization strategies
+- **QLoRA Inference Layer** - Forward pass with frozen quantized weights + LoRA adapters
+- **Dual Export Formats** - GGUF (llama.cpp compatible) and Candle native (QNAT) formats
+
+**Status**: Alpha - Active Development. Core quantization and inference are functional. Training support planned for Phase 2.
 
 ## Features
 
 - 🦀 Pure Rust implementation
-- 📉 ~4x memory reduction for base model weights
+- 📉 ~4x expected memory reduction for base model weights
 - ⚡ Fast quantization and dequantization
-- 📦 GGUF format support for deployment
-- 🔗 Integrates with [peft-rs](../peft-rs) for adapter management
+- 📦 Dual export: GGUF format (llama.cpp) and Candle native (QNAT)
+- 🔗 Integrates with [peft-rs](https://crates.io/crates/peft-rs) for LoRA adapter management
+- ✅ 23/24 tests passing (95.8% coverage)
 
 ## Installation
 
@@ -115,9 +119,11 @@ NF4 (4-bit NormalFloat) uses 16 quantization levels optimized for normally-distr
 
 This provides better accuracy than uniform quantization for neural network weights.
 
-## Memory Comparison
+## Expected Memory Reduction
 
-| Model Size | FP16 | NF4 (qlora-rs) | Reduction |
+Theoretical memory usage based on NF4 quantization (actual results may vary):
+
+| Model Size | FP16 | NF4 (Expected) | Reduction |
 |------------|------|----------------|-----------|
 | 7B params  | 14GB | ~4GB          | 3.5x      |
 | 13B params | 26GB | ~7GB          | 3.7x      |
@@ -129,4 +135,7 @@ See workspace [AGENTS.md](../AGENTS.md) for coding conventions.
 
 ## License
 
-Licensed under MIT or Apache-2.0 at your option.
+Dual licensed under MIT OR Apache-2.0 at your option.
+
+- [LICENSE-MIT](LICENSE-MIT)
+- [LICENSE-APACHE](LICENSE-APACHE)

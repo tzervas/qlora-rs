@@ -1,39 +1,68 @@
 [package]
 name = "qlora-rs"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-description = "4-bit quantized LoRA (QLoRA) implementation with GGUF export for Rust"
-repository = "https://github.com/youruser/qlora-rs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+license = "MIT OR Apache-2.0"
+authors = ["Tyler Zervas <tz-dev@vectorweight.com>"]
+description = "4-bit quantized LoRA (QLoRA) implementation with dual GGUF and Candle native export for Rust"
+repository = "https://github.com/tzervas/qlora-rs"
+homepage = "https://github.com/tzervas/qlora-rs"
+documentation = "https://docs.rs/qlora-rs"
 keywords = ["qlora", "quantization", "lora", "4bit", "gguf"]
-categories = ["science", "machine-learning"]
+categories = ["science", "algorithms"]
+readme = "README.md"
+exclude = [
+    ".github/*",
+    "benches/*",
+    "tests/*",
+    "*.md",
+    "!README.md",
+]
 
 [dependencies]
-candle-core.workspace = true
-candle-nn.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
+candle-core = "0.9"
+candle-nn = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+anyhow = "1.0"
 
-# Local workspace dependency
-peft-rs = { path = "../peft-rs" }
+# peft-rs dependency - now published on crates.io
+peft-rs = "0.4"
 
-# GGUF support
-# gguf-rs = "0.1"  # Uncomment when available
+# GGUF support (for future: gguf = "0.1")
+byteorder = "1.5"
+memmap2 = "0.9"
 
 [dev-dependencies]
-criterion.workspace = true
-proptest.workspace = true
-anyhow.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+anyhow = "1.0"
+tempfile = "3.8"
+approx = "0.5"
+tokio = { version = "1.0", features = ["full"] }
 
 [features]
 default = []
 cuda = ["candle-core/cuda", "peft-rs/cuda"]
+gguf-export = []
+native-export = []
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "warn"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+correctness = "warn"
+suspicious = "warn"
+complexity = "warn"
+perf = "warn"
+style = "warn"
+nursery = "allow"
+pedantic = "allow"
 
 [[bench]]
 name = "quantization"

@@ -57,9 +57,7 @@ impl QuantizedLinear {
     ) -> Result<Self> {
         let shape = weight.shape().dims();
         if shape.len() != 2 {
-            return Err(QLoraError::InvalidConfig(
-                "weight must be 2D".into(),
-            ));
+            return Err(QLoraError::InvalidConfig("weight must be 2D".into()));
         }
         let (out_features, in_features) = (shape[0], shape[1]);
 
@@ -67,12 +65,8 @@ impl QuantizedLinear {
         let quantized_weight = quantize_nf4(weight, config.quantization.block_size)?;
 
         // Create LoRA adapter
-        let lora = LoraLayer::new_with_zeros(
-            in_features,
-            out_features,
-            config.lora.clone(),
-            device,
-        )?;
+        let lora =
+            LoraLayer::new_with_zeros(in_features, out_features, config.lora.clone(), device)?;
 
         Ok(Self {
             quantized_weight,
@@ -102,7 +96,7 @@ impl QuantizedLinear {
     pub fn forward(&self, input: &Tensor) -> Result<Tensor> {
         // Dequantize base weight for computation
         let weight = dequantize_nf4(&self.quantized_weight, &self.device)?;
-        
+
         // Base linear: x @ W^T
         let base_output = input.matmul(&weight.t()?)?;
 
