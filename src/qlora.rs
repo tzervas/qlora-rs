@@ -93,12 +93,26 @@ impl QuantizedLinear {
     /// Forward pass through the quantized linear layer.
     ///
     /// Computes: `output = x @ W_q^T + x @ (B @ A)^T * scaling + bias`
+    ///
+    /// Supports both 2D `[batch, in_features]` and 3D `[batch, seq_len, in_features]` inputs.
     pub fn forward(&self, input: &Tensor) -> Result<Tensor> {
         // Dequantize base weight for computation
         let weight = dequantize_nf4(&self.quantized_weight, &self.device)?;
+        let weight_t = weight.t()?;
 
-        // Base linear: x @ W^T
-        let base_output = input.matmul(&weight.t()?)?;
+        // Handle both 2D and 3D inputs for batch processing
+        let base_output = if input.dims().len() == 3 {
+            // For [batch, seq, in_features], reshape to [batch * seq, in_features]
+            let (batch, seq, in_features) = input.dims3()?;
+            let reshaped = input.reshape(&[batch * seq, in_features])?;
+            let out = reshaped.matmul(&weight_t)?;
+            // Reshape back to [batch, seq, out_features]
+            let out_features = weight_t.dim(1)?;
+            out.reshape(&[batch, seq, out_features])?
+        } else {
+            // For 2D [batch, in_features], standard matmul
+            input.matmul(&weight_t)?
+        };
 
         // LoRA forward: adds x @ A^T @ B^T * scaling
         let output = self.lora.forward(input, Some(&base_output))?;
