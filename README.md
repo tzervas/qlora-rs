@@ -129,6 +129,28 @@ Theoretical memory usage based on NF4 quantization (actual results may vary):
 | 13B params | 26GB | ~7GB          | 3.7x      |
 | 70B params | 140GB| ~35GB         | 4.0x      |
 
+## Known Issues
+
+- **Unmaintained `paste` dependency**: The `paste` crate (used by `gemm` → `candle-core`) is unmaintained (RUSTSEC-2024-0436). This is a transitive dependency and does not affect functionality.
+
+  **Solution**: A maintained fork `qlora-paste` (v1.0.16) has been created and published to crates.io. To resolve this issue:
+  
+  1. The `gemm-fork/` directory contains a patched version of the `gemm` crates that use `qlora-paste` instead of `paste`.
+  2. To use this in your project, add the following to your workspace root `Cargo.toml`:
+  
+     ```toml
+     [patch.crates-io]
+     gemm = { path = "qlora-rs/gemm-fork/gemm" }
+     gemm-common = { path = "qlora-rs/gemm-fork/gemm-common" }
+     gemm-f16 = { path = "qlora-rs/gemm-fork/gemm-f16" }
+     gemm-f32 = { path = "qlora-rs/gemm-fork/gemm-f32" }
+     gemm-f64 = { path = "qlora-rs/gemm-fork/gemm-f64" }
+     gemm-c32 = { path = "qlora-rs/gemm-fork/gemm-c32" }
+     gemm-c64 = { path = "qlora-rs/gemm-fork/gemm-c64" }
+     ```
+  
+  The security audit warning is currently ignored in CI as the crate remains functional. Future updates to Candle may resolve this.
+
 ## Contributing
 
 See workspace [AGENTS.md](../AGENTS.md) for coding conventions.
