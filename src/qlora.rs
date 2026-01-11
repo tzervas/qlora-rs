@@ -204,7 +204,7 @@ mod tests {
         let actual_size = layer.memory_bytes();
 
         // Should be significantly smaller due to quantization
-        let ratio = full_size as f64 / actual_size as f64;
-        assert!(ratio > 2.0, "Expected >2x reduction, got {:.2}x", ratio);
+        let ratio = f64::from(full_size) / actual_size as f64;
+        assert!(ratio > 2.0, "Expected >2x reduction, got {ratio:.2}x");
     }
 }

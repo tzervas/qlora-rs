@@ -56,9 +56,8 @@ pub fn export_gguf<P: AsRef<Path>>(
     metadata: Option<GgufMetadata>,
     output_path: P,
 ) -> Result<()> {
-    let mut file = std::fs::File::create(output_path).map_err(|e| {
-        QLoraError::GgufExport(format!("Failed to create output file: {}", e))
-    })?;
+    let mut file = std::fs::File::create(output_path)
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to create output file: {}", e)))?;
 
     let metadata = metadata.unwrap_or_default();
 
@@ -82,9 +81,8 @@ pub fn export_gguf<P: AsRef<Path>>(
 
     // Write tensor data
     for (_name, tensor) in tensors {
-        file.write_all(&tensor.data).map_err(|e| {
-            QLoraError::GgufExport(format!("Failed to write tensor data: {}", e))
-        })?;
+        file.write_all(&tensor.data)
+            .map_err(|e| QLoraError::GgufExport(format!("Failed to write tensor data: {}", e)))?;
     }
 
     Ok(())
@@ -176,10 +174,8 @@ fn write_tensor_info<W: Write>(
         .map_err(|e| QLoraError::GgufExport(format!("Failed to write name: {}", e)))?;
 
     // Number of dimensions
-    let n_dims =
-        u32::try_from(tensor.shape.len()).map_err(|_| {
-            QLoraError::GgufExport("Tensor has too many dimensions".into())
-        })?;
+    let n_dims = u32::try_from(tensor.shape.len())
+        .map_err(|_| QLoraError::GgufExport("Tensor has too many dimensions".into()))?;
     writer
         .write_all(&n_dims.to_le_bytes())
         .map_err(|e| QLoraError::GgufExport(format!("Failed to write dimension count: {}", e)))?;

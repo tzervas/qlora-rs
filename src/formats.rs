@@ -111,10 +111,7 @@ pub fn export_model<P: AsRef<Path>>(
             let metadata = export::GgufMetadata {
                 model_name: config.model_name,
                 model_type: config.model_type,
-                model_size: tensors
-                    .iter()
-                    .map(|(_, t)| t.numel())
-                    .sum(),
+                model_size: tensors.iter().map(|(_, t)| t.numel()).sum(),
             };
             export::export_gguf(tensors, Some(metadata), output_path)
         }
