@@ -13,6 +13,7 @@ use crate::{export, native};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExportFormat {
     /// GGUF format (compatible with llama.cpp ecosystem).
+    #[default]
     Gguf,
     /// Candle native format (optimized for Candle framework).
     Native,

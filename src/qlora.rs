@@ -44,7 +44,7 @@ impl QuantizedLinear {
     pub fn from_weight(
         weight: &Tensor,
         bias: Option<Tensor>,
-        config: QLoraConfig,
+        config: &QLoraConfig,
         device: &Device,
     ) -> Result<Self> {
         let shape = weight.shape().dims();
@@ -80,7 +80,7 @@ impl QuantizedLinear {
     pub fn new(
         in_features: usize,
         out_features: usize,
-        config: QLoraConfig,
+        config: &QLoraConfig,
         device: &Device,
     ) -> Result<Self> {
         let weight = Tensor::zeros(&[out_features, in_features], DType::F32, device)?;
@@ -162,6 +162,7 @@ pub struct QLoraLayer {
 
 impl QLoraLayer {
     /// Create a new `QLoRA` layer.
+    #[must_use] 
     pub fn new(linear: QuantizedLinear) -> Self {
         Self { linear }
     }
@@ -183,7 +184,7 @@ mod tests {
     fn test_qlora_creation() {
         let config = QLoraConfig::default();
         let device = Device::Cpu;
-        let layer = QuantizedLinear::new(768, 768, config, &device);
+        let layer = QuantizedLinear::new(768, 768, &config, &device);
         assert!(layer.is_ok());
     }
 
@@ -191,7 +192,7 @@ mod tests {
     fn test_qlora_forward_shape() {
         let config = QLoraConfig::default();
         let device = Device::Cpu;
-        let layer = QuantizedLinear::new(768, 768, config, &device).unwrap();
+        let layer = QuantizedLinear::new(768, 768, &config, &device).unwrap();
 
         let input = Tensor::zeros(&[1, 10, 768], DType::F32, &device).unwrap();
         let output = layer.forward(&input).unwrap();
@@ -203,7 +204,7 @@ mod tests {
     fn test_qlora_memory_reduction() {
         let config = QLoraConfig::default();
         let device = Device::Cpu;
-        let layer = QuantizedLinear::new(4096, 4096, config, &device).unwrap();
+        let layer = QuantizedLinear::new(4096, 4096, &config, &device).unwrap();
 
         // Full precision would be 4096 * 4096 * 4 = 67MB
         let full_size = 4096 * 4096 * 4;
