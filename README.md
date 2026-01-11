@@ -133,7 +133,7 @@ Theoretical memory usage based on NF4 quantization (actual results may vary):
 
 - **Unmaintained `paste` dependency**: The `paste` crate (used by `gemm` → `candle-core`) is unmaintained (RUSTSEC-2024-0436). This is a transitive dependency and does not affect functionality.
 
-  **Solution**: A maintained fork `qlora-paste` (v1.0.16) has been created and published to crates.io. To resolve this issue:
+  **Solution**: A maintained fork `qlora-paste` (v1.0.17) has been created and published to crates.io. To resolve this issue:
   
   1. The `gemm-fork/` directory contains a patched version of the `gemm` crates that use `qlora-paste` instead of `paste`.
   2. To use this in your project, add the following to your workspace root `Cargo.toml`:
