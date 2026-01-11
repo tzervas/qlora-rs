@@ -10,18 +10,12 @@ use crate::quantization::QuantizedTensor;
 use crate::{export, native};
 
 /// Supported export formats.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExportFormat {
     /// GGUF format (compatible with llama.cpp ecosystem).
     Gguf,
     /// Candle native format (optimized for Candle framework).
     Native,
-}
-
-impl Default for ExportFormat {
-    fn default() -> Self {
-        Self::Gguf
-    }
 }
 
 impl std::fmt::Display for ExportFormat {
@@ -74,18 +68,21 @@ impl ExportConfig {
     }
 
     /// Set the format for this export configuration.
+    #[must_use]
     pub fn with_format(mut self, format: ExportFormat) -> Self {
         self.format = format;
         self
     }
 
     /// Set the model name for metadata.
+    #[must_use]
     pub fn with_model_name(mut self, name: String) -> Self {
         self.model_name = name;
         self
     }
 
     /// Set the model type for metadata.
+    #[must_use]
     pub fn with_model_type(mut self, model_type: String) -> Self {
         self.model_type = model_type;
         self

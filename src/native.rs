@@ -27,7 +27,9 @@
 //!
 //! Tensor data (variable)
 //!   - Quantized values (2 values per byte)
-//!   - Scale factors (f32 per block)
+//!   - Scale factors:
+//!       - Either per-block f32 scales (one f32 per block), or
+//!       - Double-quantized scales stored as `scales_quantized` and `scales_scales`
 //!   - Zero points (optional, f32 per block)
 //! ```
 
@@ -82,7 +84,7 @@ pub fn export_native<P: AsRef<Path>>(
     output_path: P,
 ) -> Result<()> {
     let mut file = std::fs::File::create(output_path)
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to create output file: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to create output file: {e}")))?;
 
     let metadata = metadata.unwrap_or_default();
 
@@ -93,10 +95,10 @@ pub fn export_native<P: AsRef<Path>>(
     write_metadata(&mut file, &metadata)?;
 
     // Write tensor headers and calculate offsets
-    let tensor_offsets = write_tensor_headers(&mut file, tensors)?;
+    let _tensor_offsets = write_tensor_headers(&mut file, tensors)?;
 
-    // Write tensor data with calculated offsets
-    for ((_name, tensor), _offset) in tensors.iter().zip(tensor_offsets.iter()) {
+    // Write tensor data sequentially in the same order as the headers
+    for (_name, tensor) in tensors {
         write_tensor_data(&mut file, tensor)?;
     }
 
@@ -108,34 +110,34 @@ fn write_header<W: Write>(writer: &mut W, tensor_count: usize) -> Result<()> {
     // Magic
     writer
         .write_all(MAGIC)
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to write magic: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to write magic: {e}")))?;
 
     // Version
     writer
         .write_all(&VERSION.to_le_bytes())
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to write version: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to write version: {e}")))?;
 
     // Format flags
     writer
         .write_all(&FORMAT_FLAGS.to_le_bytes())
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to write flags: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to write flags: {e}")))?;
 
     // Metadata size (placeholder, will be updated later if needed)
     writer
         .write_all(&0u64.to_le_bytes())
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to write metadata size: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to write metadata size: {e}")))?;
 
     // Tensor count
     let count = u32::try_from(tensor_count)
         .map_err(|_| QLoraError::NativeExport("Too many tensors".into()))?;
     writer
         .write_all(&count.to_le_bytes())
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to write tensor count: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to write tensor count: {e}")))?;
 
     // Reserved
     writer
         .write_all(&0u32.to_le_bytes())
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to write reserved: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to write reserved: {e}")))?;
 
     Ok(())
 }
@@ -156,7 +158,7 @@ fn write_metadata<W: Write>(writer: &mut W, metadata: &NativeMetadata) -> Result
     };
     writer
         .write_all(&[dtype_byte])
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to write compute dtype: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to write compute dtype: {e}")))?;
 
     Ok(())
 }
@@ -182,14 +184,14 @@ fn write_tensor_headers<W: Write>(
         let shape_len = u32::try_from(tensor.shape.len())
             .map_err(|_| QLoraError::NativeExport("Tensor shape too large".into()))?;
         writer.write_all(&shape_len.to_le_bytes()).map_err(|e| {
-            QLoraError::NativeExport(format!("Failed to write shape length: {}", e))
+            QLoraError::NativeExport(format!("Failed to write shape length: {e}"))
         })?;
 
         for &dim in &tensor.shape {
             let dim = u64::try_from(dim)
                 .map_err(|_| QLoraError::NativeExport("Dimension too large".into()))?;
             writer.write_all(&dim.to_le_bytes()).map_err(|e| {
-                QLoraError::NativeExport(format!("Failed to write dimension: {}", e))
+                QLoraError::NativeExport(format!("Failed to write dimension: {e}"))
             })?;
         }
 
@@ -198,19 +200,19 @@ fn write_tensor_headers<W: Write>(
             .map_err(|_| QLoraError::NativeExport("Block size too large".into()))?;
         writer
             .write_all(&block_size.to_le_bytes())
-            .map_err(|e| QLoraError::NativeExport(format!("Failed to write block size: {}", e)))?;
+            .map_err(|e| QLoraError::NativeExport(format!("Failed to write block size: {e}")))?;
 
         // Offset
         writer
             .write_all(&offset.to_le_bytes())
-            .map_err(|e| QLoraError::NativeExport(format!("Failed to write offset: {}", e)))?;
+            .map_err(|e| QLoraError::NativeExport(format!("Failed to write offset: {e}")))?;
 
         // Number of blocks
         let num_blocks = u32::try_from(tensor.scales.len())
             .map_err(|_| QLoraError::NativeExport("Too many blocks".into()))?;
         writer
             .write_all(&num_blocks.to_le_bytes())
-            .map_err(|e| QLoraError::NativeExport(format!("Failed to write block count: {}", e)))?;
+            .map_err(|e| QLoraError::NativeExport(format!("Failed to write block count: {e}")))?;
     }
 
     Ok(offsets)
@@ -221,20 +223,34 @@ fn write_tensor_data<W: Write>(writer: &mut W, tensor: &QuantizedTensor) -> Resu
     // Quantized values
     writer
         .write_all(&tensor.data)
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to write quantized data: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to write quantized data: {e}")))?;
 
     // Scale factors
     for &scale in &tensor.scales {
         writer
             .write_all(&scale.to_le_bytes())
-            .map_err(|e| QLoraError::NativeExport(format!("Failed to write scale: {}", e)))?;
+            .map_err(|e| QLoraError::NativeExport(format!("Failed to write scale: {e}")))?;
     }
 
     // Zero points (if present)
     if let Some(ref zp) = tensor.zero_points {
         for &zp_val in zp {
             writer.write_all(&zp_val.to_le_bytes()).map_err(|e| {
-                QLoraError::NativeExport(format!("Failed to write zero point: {}", e))
+                QLoraError::NativeExport(format!("Failed to write zero point: {e}"))
+            })?;
+        }
+    }
+
+    // Double-quantized scale data (if present)
+    if let Some(ref scales_q) = tensor.scales_quantized {
+        writer.write_all(scales_q).map_err(|e| {
+            QLoraError::NativeExport(format!("Failed to write double-quantized scales: {e}"))
+        })?;
+    }
+    if let Some(ref scales_s) = tensor.scales_scales {
+        for &scale_s in scales_s {
+            writer.write_all(&scale_s.to_le_bytes()).map_err(|e| {
+                QLoraError::NativeExport(format!("Failed to write double-quantized scale factors: {e}"))
             })?;
         }
     }
@@ -249,10 +265,10 @@ fn write_string<W: Write>(writer: &mut W, s: &str) -> Result<()> {
         .map_err(|_| QLoraError::NativeExport("String too long".into()))?;
     writer
         .write_all(&len.to_le_bytes())
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to write string length: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to write string length: {e}")))?;
     writer
         .write_all(bytes)
-        .map_err(|e| QLoraError::NativeExport(format!("Failed to write string: {}", e)))?;
+        .map_err(|e| QLoraError::NativeExport(format!("Failed to write string: {e}")))?;
     Ok(())
 }
 
@@ -281,6 +297,13 @@ fn calculate_tensor_size(tensor: &QuantizedTensor) -> usize {
     size += tensor.scales.len() * 4; // scale factors
     if let Some(ref zp) = tensor.zero_points {
         size += zp.len() * 4; // zero points
+    }
+    // Double-quantized scale data (if present)
+    if let Some(ref scales_q) = tensor.scales_quantized {
+        size += std::mem::size_of_val(scales_q.as_slice());
+    }
+    if let Some(ref scales_s) = tensor.scales_scales {
+        size += std::mem::size_of_val(scales_s.as_slice());
     }
     size
 }

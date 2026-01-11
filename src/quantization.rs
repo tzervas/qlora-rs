@@ -1,9 +1,9 @@
-//! 4-bit NormalFloat (NF4) quantization.
+//! 4-bit `NormalFloat` (NF4) quantization.
 //!
 //! NF4 quantization uses 16 levels optimized for normally-distributed weights,
 //! providing better accuracy than uniform 4-bit quantization.
 //!
-//! Reference: <https://arxiv.org/abs/2305.14314> (QLoRA paper)
+//! Reference: <https://arxiv.org/abs/2305.14314> (`QLoRA` paper)
 
 use candle_core::{Device, Tensor};
 use serde::{Deserialize, Serialize};
@@ -154,7 +154,7 @@ impl QuantizedTensor {
 pub fn quantize_nf4(tensor: &Tensor, block_size: usize) -> Result<QuantizedTensor> {
     quantize_nf4_with_config(
         tensor,
-        QuantizationConfig {
+        &QuantizationConfig {
             block_size,
             double_quant: false, // Use non-double quantization by default
             compute_dtype: ComputeDType::F32,
@@ -177,11 +177,11 @@ pub fn quantize_nf4(tensor: &Tensor, block_size: usize) -> Result<QuantizedTenso
 /// Returns error if tensor cannot be flattened or has invalid shape
 pub fn quantize_nf4_with_config(
     tensor: &Tensor,
-    config: QuantizationConfig,
+    config: &QuantizationConfig,
 ) -> Result<QuantizedTensor> {
     match config.strategy {
-        QuantizationStrategy::PerTensor => quantize_per_tensor(tensor, &config),
-        QuantizationStrategy::PerChannel => quantize_per_channel(tensor, &config),
+        QuantizationStrategy::PerTensor => quantize_per_tensor(tensor, config),
+        QuantizationStrategy::PerChannel => quantize_per_channel(tensor, config),
     }
 }
 
@@ -227,7 +227,7 @@ fn quantize_per_tensor(tensor: &Tensor, config: &QuantizationConfig) -> Result<Q
 
     // Apply double quantization if enabled
     let (scales_quantized, scales_scales) = if config.double_quant {
-        let (sq, ss) = double_quantize_scales(&scales, 256);
+        let (sq, ss) = double_quantize_scales(&scales, 255);
         (Some(sq), Some(ss))
     } else {
         (None, None)
@@ -300,7 +300,7 @@ fn quantize_per_channel(tensor: &Tensor, config: &QuantizationConfig) -> Result<
 
     // Apply double quantization if enabled
     let (scales_quantized, scales_scales) = if config.double_quant {
-        let (sq, ss) = double_quantize_scales(&scales, 256);
+        let (sq, ss) = double_quantize_scales(&scales, 255);
         (Some(sq), Some(ss))
     } else {
         (None, None)
@@ -351,7 +351,7 @@ fn quantize_per_channel(tensor: &Tensor, config: &QuantizationConfig) -> Result<
 ///
 /// # Returns
 /// Tuple of (`quantized_scales`, `scale_factors_for_scales`)
-fn double_quantize_scales(scales: &[f32], max_val: usize) -> (Vec<u8>, Vec<f32>) {
+fn double_quantize_scales(scales: &[f32], _max_val: usize) -> (Vec<u8>, Vec<f32>) {
     if scales.is_empty() {
         return (Vec::new(), Vec::new());
     }
@@ -363,15 +363,15 @@ fn double_quantize_scales(scales: &[f32], max_val: usize) -> (Vec<u8>, Vec<f32>)
         return (vec![0; scales.len()], vec![1.0]);
     }
 
-    // Quantize all scales using a single scaling factor
+    // Quantize all scales preserving sign
     #[allow(clippy::cast_precision_loss)]
-    let scale_factor = absmax / (max_val as f32);
+    let scale_factor = absmax / 127.0; // Use 127 for signed range -127 to 127
     let quantized_scales: Vec<u8> = scales
         .iter()
         .map(|&s| {
-            let quantized = (s / scale_factor).abs() as u32;
-            #[allow(clippy::cast_possible_truncation)]
-            let result = std::cmp::min(quantized, max_val as u32) as u8;
+            let quantized = (s / scale_factor) + 128.0; // Offset by 128
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let result = quantized.clamp(0.0, 255.0) as u8;
             result
         })
         .collect();
@@ -388,7 +388,7 @@ fn dequantize_double_scales(scales_quantized: &[u8], scales_scales: &[f32]) -> V
     let scale_factor = scales_scales[0];
     scales_quantized
         .iter()
-        .map(|&sq| f32::from(sq) * scale_factor)
+        .map(|&sq| (f32::from(sq) - 128.0) * scale_factor)
         .collect()
 }
 
@@ -593,7 +593,7 @@ mod tests {
             use_zero_point: false,
         };
 
-        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+        let quantized = quantize_nf4_with_config(&original, &config).unwrap();
 
         // Verify double quantization was applied
         assert!(quantized.double_quant_enabled);
@@ -624,7 +624,7 @@ mod tests {
             use_zero_point: false,
         };
 
-        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+        let quantized = quantize_nf4_with_config(&original, &config).unwrap();
         let restored = dequantize_nf4(&quantized, &device).unwrap();
 
         let original_vec: Vec<f32> = original.to_vec1().unwrap();
@@ -654,7 +654,7 @@ mod tests {
             use_zero_point: false,
         };
 
-        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+        let quantized = quantize_nf4_with_config(&original, &config).unwrap();
 
         // Verify double quantization was NOT applied
         assert!(!quantized.double_quant_enabled);
@@ -686,7 +686,7 @@ mod tests {
             use_zero_point: false,
         };
 
-        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+        let quantized = quantize_nf4_with_config(&original, &config).unwrap();
 
         // Verify we have one scale per channel
         assert_eq!(
@@ -725,7 +725,7 @@ mod tests {
             use_zero_point: true,
         };
 
-        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+        let quantized = quantize_nf4_with_config(&original, &config).unwrap();
 
         // Verify zero points were computed
         assert!(quantized.zero_points.is_some());
@@ -764,7 +764,7 @@ mod tests {
             use_zero_point: true,
         };
 
-        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+        let quantized = quantize_nf4_with_config(&original, &config).unwrap();
 
         // Verify per-channel with zero points
         assert_eq!(quantized.scales.len(), 2);
@@ -790,7 +790,7 @@ mod tests {
             use_zero_point: false,
         };
 
-        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+        let quantized = quantize_nf4_with_config(&original, &config).unwrap();
 
         // Verify both per-channel and double quantization applied
         assert_eq!(quantized.scales.len(), 8);

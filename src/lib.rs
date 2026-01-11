@@ -1,11 +1,11 @@
 //! # qlora-rs
 //!
-//! 4-bit quantized LoRA (QLoRA) implementation for Rust.
+//! 4-bit quantized `LoRA` (`QLoRA`) implementation for Rust.
 //!
 //! This crate provides:
-//! - NF4 (4-bit NormalFloat) quantization
+//! - NF4 (4-bit `NormalFloat`) quantization
 //! - Double quantization for memory efficiency
-//! - QLoRA training with frozen quantized base weights
+//! - `QLoRA` training with frozen quantized base weights
 //! - GGUF model export for inference deployment
 //!
 //! ## Quick Start
@@ -24,8 +24,8 @@
 //!
 //! ## Architecture
 //!
-//! QLoRA keeps base model weights frozen in 4-bit precision while training
-//! LoRA adapters in full precision. This enables fine-tuning large models
+//! `QLoRA` keeps base model weights frozen in 4-bit precision while training
+//! `LoRA` adapters in full precision. This enables fine-tuning large models
 //! on consumer hardware.
 
 #![warn(missing_docs)]

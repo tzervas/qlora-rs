@@ -18,7 +18,7 @@ const GGUF_MAGIC: u32 = 0x4655_4747; // "GGUF"
 /// GGUF version (3 = latest stable).
 const GGUF_VERSION: u32 = 3;
 
-/// GGUF tensor type for Q4_0 (NF4 compatible).
+/// GGUF tensor type for `Q4_0` (NF4 compatible).
 const GGUF_TYPE_Q4_0: u32 = 2;
 
 /// GGUF metadata key-value pairs.
@@ -57,7 +57,7 @@ pub fn export_gguf<P: AsRef<Path>>(
     output_path: P,
 ) -> Result<()> {
     let mut file = std::fs::File::create(output_path)
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to create output file: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to create output file: {e}")))?;
 
     let metadata = metadata.unwrap_or_default();
 
@@ -66,23 +66,61 @@ pub fn export_gguf<P: AsRef<Path>>(
     kv_pairs.insert("general.name".to_string(), metadata.model_name);
     kv_pairs.insert("general.type".to_string(), metadata.model_type);
 
-    // Calculate offsets for tensor data
+    // Calculate offsets for tensor data (including scales)
     let header_size = calculate_header_size(tensors, &kv_pairs);
     let mut current_offset = header_size as u64;
     let mut tensor_offsets = Vec::new();
 
     for (_name, tensor) in tensors {
         tensor_offsets.push(current_offset);
-        current_offset += tensor.data.len() as u64;
+        current_offset += tensor.data.len() as u64; // quantized data
+        current_offset += (tensor.scales.len() * 4) as u64; // scales (f32)
+        if let Some(ref zp) = tensor.zero_points {
+            current_offset += (zp.len() * 4) as u64; // zero points (f32)
+        }
+        // Double-quantized data
+        if let Some(ref scales_q) = tensor.scales_quantized {
+            current_offset += scales_q.len() as u64;
+        }
+        if let Some(ref scales_s) = tensor.scales_scales {
+            current_offset += (scales_s.len() * 4) as u64;
+        }
     }
 
     // Write header
     write_gguf_header(&mut file, &kv_pairs, tensors, &tensor_offsets)?;
 
-    // Write tensor data
+    // Write tensor data (including scales and metadata)
     for (_name, tensor) in tensors {
+        // Quantized values
         file.write_all(&tensor.data)
-            .map_err(|e| QLoraError::GgufExport(format!("Failed to write tensor data: {}", e)))?;
+            .map_err(|e| QLoraError::GgufExport(format!("Failed to write tensor data: {e}")))?;
+        
+        // Scales
+        for &scale in &tensor.scales {
+            file.write_all(&scale.to_le_bytes())
+                .map_err(|e| QLoraError::GgufExport(format!("Failed to write scale: {e}")))?;
+        }
+        
+        // Zero points
+        if let Some(ref zp) = tensor.zero_points {
+            for &zp_val in zp {
+                file.write_all(&zp_val.to_le_bytes())
+                    .map_err(|e| QLoraError::GgufExport(format!("Failed to write zero point: {e}")))?;
+            }
+        }
+        
+        // Double-quantized data
+        if let Some(ref scales_q) = tensor.scales_quantized {
+            file.write_all(scales_q)
+                .map_err(|e| QLoraError::GgufExport(format!("Failed to write double-quantized scales: {e}")))?;
+        }
+        if let Some(ref scales_s) = tensor.scales_scales {
+            for &scale_s in scales_s {
+                file.write_all(&scale_s.to_le_bytes())
+                    .map_err(|e| QLoraError::GgufExport(format!("Failed to write double-quantized scale factors: {e}")))?;
+            }
+        }
     }
 
     Ok(())
@@ -98,23 +136,23 @@ fn write_gguf_header<W: Write>(
     // Magic number and version
     writer
         .write_all(&GGUF_MAGIC.to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write magic: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write magic: {e}")))?;
     writer
         .write_all(&GGUF_VERSION.to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write version: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write version: {e}")))?;
 
     // Number of tensors and metadata entries
     let n_tensors = u64::try_from(tensors.len())
         .map_err(|_| QLoraError::GgufExport("Too many tensors".into()))?;
     writer
         .write_all(&n_tensors.to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write tensor count: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write tensor count: {e}")))?;
 
     let n_kv = u64::try_from(kv_pairs.len())
         .map_err(|_| QLoraError::GgufExport("Too many metadata entries".into()))?;
     writer
         .write_all(&n_kv.to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write kv count: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write kv count: {e}")))?;
 
     // Write key-value metadata
     for (key, value) in kv_pairs {
@@ -135,24 +173,24 @@ fn write_kv_pair<W: Write>(writer: &mut W, key: &str, value: &str) -> Result<()>
     let key_bytes = key.as_bytes();
     writer
         .write_all(&(key_bytes.len() as u64).to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write key length: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write key length: {e}")))?;
     writer
         .write_all(key_bytes)
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write key: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write key: {e}")))?;
 
     // Value type (1 = string)
     writer
         .write_all(&1u32.to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write value type: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write value type: {e}")))?;
 
     // Value length and value
     let value_bytes = value.as_bytes();
     writer
         .write_all(&(value_bytes.len() as u64).to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write value length: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write value length: {e}")))?;
     writer
         .write_all(value_bytes)
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write value: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write value: {e}")))?;
 
     Ok(())
 }
@@ -168,34 +206,34 @@ fn write_tensor_info<W: Write>(
     let name_bytes = name.as_bytes();
     writer
         .write_all(&(name_bytes.len() as u64).to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write name length: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write name length: {e}")))?;
     writer
         .write_all(name_bytes)
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write name: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write name: {e}")))?;
 
     // Number of dimensions
     let n_dims = u32::try_from(tensor.shape.len())
         .map_err(|_| QLoraError::GgufExport("Tensor has too many dimensions".into()))?;
     writer
         .write_all(&n_dims.to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write dimension count: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write dimension count: {e}")))?;
 
     // Dimensions (as u64)
     for &dim in &tensor.shape {
         writer
             .write_all(&(dim as u64).to_le_bytes())
-            .map_err(|e| QLoraError::GgufExport(format!("Failed to write dimension: {}", e)))?;
+            .map_err(|e| QLoraError::GgufExport(format!("Failed to write dimension: {e}")))?;
     }
 
     // Type (Q4_0 for NF4)
     writer
         .write_all(&GGUF_TYPE_Q4_0.to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write tensor type: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write tensor type: {e}")))?;
 
     // Offset to tensor data
     writer
         .write_all(&offset.to_le_bytes())
-        .map_err(|e| QLoraError::GgufExport(format!("Failed to write tensor offset: {}", e)))?;
+        .map_err(|e| QLoraError::GgufExport(format!("Failed to write tensor offset: {e}")))?;
 
     Ok(())
 }
@@ -228,10 +266,10 @@ fn calculate_header_size(
     size
 }
 
-/// Merge LoRA weights into quantized base and export.
+/// Merge `LoRA` weights into quantized base and export.
 ///
-/// This dequantizes the base, merges LoRA, and re-quantizes.
-/// Useful for deployment without LoRA overhead.
+/// This dequantizes the base, merges `LoRA`, and re-quantizes.
+/// Useful for deployment without `LoRA` overhead.
 ///
 /// # Errors
 /// Returns error if operation is not yet implemented
