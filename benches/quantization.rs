@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 fn benchmark_quantization(c: &mut Criterion) {
     // Benchmarks will be added as quantization is implemented

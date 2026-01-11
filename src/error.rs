@@ -30,6 +30,10 @@ pub enum QLoraError {
     #[error("GGUF export error: {0}")]
     GgufExport(String),
 
+    /// Native format export error.
+    #[error("native format export error: {0}")]
+    NativeExport(String),
+
     /// IO error.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

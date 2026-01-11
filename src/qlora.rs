@@ -57,9 +57,7 @@ impl QuantizedLinear {
     ) -> Result<Self> {
         let shape = weight.shape().dims();
         if shape.len() != 2 {
-            return Err(QLoraError::InvalidConfig(
-                "weight must be 2D".into(),
-            ));
+            return Err(QLoraError::InvalidConfig("weight must be 2D".into()));
         }
         let (out_features, in_features) = (shape[0], shape[1]);
 
@@ -67,12 +65,8 @@ impl QuantizedLinear {
         let quantized_weight = quantize_nf4(weight, config.quantization.block_size)?;
 
         // Create LoRA adapter
-        let lora = LoraLayer::new_with_zeros(
-            in_features,
-            out_features,
-            config.lora.clone(),
-            device,
-        )?;
+        let lora =
+            LoraLayer::new_with_zeros(in_features, out_features, config.lora.clone(), device)?;
 
         Ok(Self {
             quantized_weight,
@@ -99,12 +93,26 @@ impl QuantizedLinear {
     /// Forward pass through the quantized linear layer.
     ///
     /// Computes: `output = x @ W_q^T + x @ (B @ A)^T * scaling + bias`
+    ///
+    /// Supports both 2D `[batch, in_features]` and 3D `[batch, seq_len, in_features]` inputs.
     pub fn forward(&self, input: &Tensor) -> Result<Tensor> {
         // Dequantize base weight for computation
         let weight = dequantize_nf4(&self.quantized_weight, &self.device)?;
-        
-        // Base linear: x @ W^T
-        let base_output = input.matmul(&weight.t()?)?;
+        let weight_t = weight.t()?;
+
+        // Handle both 2D and 3D inputs for batch processing
+        let base_output = if input.dims().len() == 3 {
+            // For [batch, seq, in_features], reshape to [batch * seq, in_features]
+            let (batch, seq, in_features) = input.dims3()?;
+            let reshaped = input.reshape(&[batch * seq, in_features])?;
+            let out = reshaped.matmul(&weight_t)?;
+            // Reshape back to [batch, seq, out_features]
+            let out_features = weight_t.dim(1)?;
+            out.reshape(&[batch, seq, out_features])?
+        } else {
+            // For 2D [batch, in_features], standard matmul
+            input.matmul(&weight_t)?
+        };
 
         // LoRA forward: adds x @ A^T @ B^T * scaling
         let output = self.lora.forward(input, Some(&base_output))?;
@@ -196,7 +204,7 @@ mod tests {
         let actual_size = layer.memory_bytes();
 
         // Should be significantly smaller due to quantization
-        let ratio = full_size as f64 / actual_size as f64;
-        assert!(ratio > 2.0, "Expected >2x reduction, got {:.2}x", ratio);
+        let ratio = f64::from(full_size) / actual_size as f64;
+        assert!(ratio > 2.0, "Expected >2x reduction, got {ratio:.2}x");
     }
 }

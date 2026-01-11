@@ -33,9 +33,12 @@
 
 pub mod error;
 pub mod export;
+pub mod formats;
+pub mod native;
 pub mod qlora;
 pub mod quantization;
 
 pub use error::{QLoraError, Result};
+pub use formats::{export_model, export_native_format, ExportConfig, ExportFormat};
 pub use qlora::{QLoraConfig, QLoraLayer, QuantizedLinear};
 pub use quantization::{dequantize_nf4, quantize_nf4, QuantizationConfig, QuantizedTensor};

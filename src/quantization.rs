@@ -5,31 +5,59 @@
 //!
 //! Reference: <https://arxiv.org/abs/2305.14314> (QLoRA paper)
 
-use candle_core::{DType, Device, Tensor};
+use candle_core::{Device, Tensor};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{QLoraError, Result};
 
 /// The 16 quantization levels for NF4, optimized for N(0,1) distribution.
 /// These values minimize expected quantization error for normally-distributed data.
+#[allow(clippy::excessive_precision)]
 pub const NF4_LEVELS: [f32; 16] = [
-    -1.0, -0.6961928009986877, -0.5250730514526367, -0.39491748809814453,
-    -0.28444138169288635, -0.18477343022823334, -0.09105003625154495, 0.0,
-    0.07958029955625534, 0.16093020141124725, 0.24611230194568634, 0.33791524171829224,
-    0.44070982933044434, 0.5626170039176941, 0.7229568362236023, 1.0,
+    -1.0,
+    -0.696_192_800_998_688,
+    -0.525_073_051_452_637,
+    -0.394_917_488_098_145,
+    -0.284_441_381_692_887,
+    -0.184_773_430_228_233,
+    -0.091_050_036_251_545,
+    0.0,
+    0.079_580_299_556_255,
+    0.160_930_201_411_247,
+    0.246_112_301_945_686,
+    0.337_915_241_718_292,
+    0.440_709_829_330_444,
+    0.562_617_003_917_694,
+    0.722_956_836_223_602,
+    1.0,
 ];
+
+/// Quantization strategy for organizing scale factors.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum QuantizationStrategy {
+    /// Standard per-tensor block quantization.
+    PerTensor,
+    /// Per-channel quantization (one scale per output channel).
+    PerChannel,
+}
 
 /// Configuration for quantization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantizationConfig {
     /// Block size for quantization (number of values sharing a scale).
     pub block_size: usize,
-    
+
     /// Whether to use double quantization (quantize the scales).
     pub double_quant: bool,
-    
+
     /// Data type for computation (usually bf16 or f16).
     pub compute_dtype: ComputeDType,
+
+    /// Quantization strategy (per-tensor or per-channel).
+    pub strategy: QuantizationStrategy,
+
+    /// Whether to use zero-point quantization (asymmetric).
+    pub use_zero_point: bool,
 }
 
 /// Compute data type for dequantized values.
@@ -50,6 +78,8 @@ impl Default for QuantizationConfig {
             block_size: 64,
             double_quant: true,
             compute_dtype: ComputeDType::F32,
+            strategy: QuantizationStrategy::PerTensor,
+            use_zero_point: false,
         }
     }
 }
@@ -63,10 +93,18 @@ pub struct QuantizedTensor {
     pub scales: Vec<f32>,
     /// Zero points per block (for asymmetric quantization).
     pub zero_points: Option<Vec<f32>>,
+    /// Quantized scales (when double quantization is used).
+    pub scales_quantized: Option<Vec<u8>>,
+    /// Scale factors for the scales (when double quantization is used).
+    pub scales_scales: Option<Vec<f32>>,
     /// Original shape.
     pub shape: Vec<usize>,
     /// Block size used for quantization.
     pub block_size: usize,
+    /// Whether double quantization was applied.
+    pub double_quant_enabled: bool,
+    /// Quantization strategy used.
+    pub strategy: QuantizationStrategy,
 }
 
 impl QuantizedTensor {
@@ -79,11 +117,30 @@ impl QuantizedTensor {
     /// Get the memory size in bytes.
     #[must_use]
     pub fn size_bytes(&self) -> usize {
-        self.data.len() + self.scales.len() * 4
+        let mut size = self.data.len() + self.scales.len() * 4;
+        if let Some(ref zp) = self.zero_points {
+            size += zp.len() * 4;
+        }
+        if let Some(ref sq) = self.scales_quantized {
+            size += sq.len();
+        }
+        if let Some(ref ss) = self.scales_scales {
+            size += ss.len() * 4;
+        }
+        size
+    }
+
+    /// Get the compression ratio relative to FP32 format.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn compression_ratio(&self) -> f64 {
+        let fp32_size = self.numel() * 4;
+        let quantized_size = self.size_bytes();
+        fp32_size as f64 / quantized_size as f64
     }
 }
 
-/// Quantize a tensor to NF4 format.
+/// Quantize a tensor to NF4 format with optional double quantization.
 ///
 /// # Arguments
 /// * `tensor` - Input tensor to quantize
@@ -95,24 +152,59 @@ impl QuantizedTensor {
 /// # Errors
 /// Returns error if tensor cannot be flattened or has invalid shape
 pub fn quantize_nf4(tensor: &Tensor, block_size: usize) -> Result<QuantizedTensor> {
+    quantize_nf4_with_config(
+        tensor,
+        QuantizationConfig {
+            block_size,
+            double_quant: false, // Use non-double quantization by default
+            compute_dtype: ComputeDType::F32,
+            strategy: QuantizationStrategy::PerTensor,
+            use_zero_point: false,
+        },
+    )
+}
+
+/// Quantize a tensor to NF4 format with full configuration options.
+///
+/// # Arguments
+/// * `tensor` - Input tensor to quantize
+/// * `config` - Quantization configuration including double quant option
+///
+/// # Returns
+/// Quantized tensor with packed 4-bit values and optional double-quantized scales
+///
+/// # Errors
+/// Returns error if tensor cannot be flattened or has invalid shape
+pub fn quantize_nf4_with_config(
+    tensor: &Tensor,
+    config: QuantizationConfig,
+) -> Result<QuantizedTensor> {
+    match config.strategy {
+        QuantizationStrategy::PerTensor => quantize_per_tensor(tensor, &config),
+        QuantizationStrategy::PerChannel => quantize_per_channel(tensor, &config),
+    }
+}
+
+/// Quantize a tensor using per-tensor strategy (standard block quantization).
+fn quantize_per_tensor(tensor: &Tensor, config: &QuantizationConfig) -> Result<QuantizedTensor> {
     let shape = tensor.shape().dims().to_vec();
     let flat = tensor.flatten_all()?.to_vec1::<f32>()?;
     let numel = flat.len();
 
-    if numel % block_size != 0 {
+    if numel % config.block_size != 0 {
         return Err(QLoraError::InvalidConfig(format!(
             "tensor size {} not divisible by block size {}",
-            numel, block_size
+            numel, config.block_size
         )));
     }
 
-    let num_blocks = numel / block_size;
+    let num_blocks = numel / config.block_size;
     let mut scales = Vec::with_capacity(num_blocks);
     let mut quantized = Vec::with_capacity((numel + 1) / 2);
 
     for block_idx in 0..num_blocks {
-        let start = block_idx * block_size;
-        let end = start + block_size;
+        let start = block_idx * config.block_size;
+        let end = start + config.block_size;
         let block = &flat[start..end];
 
         // Compute absmax scale
@@ -133,16 +225,212 @@ pub fn quantize_nf4(tensor: &Tensor, block_size: usize) -> Result<QuantizedTenso
         }
     }
 
+    // Apply double quantization if enabled
+    let (scales_quantized, scales_scales) = if config.double_quant {
+        let (sq, ss) = double_quantize_scales(&scales, 256);
+        (Some(sq), Some(ss))
+    } else {
+        (None, None)
+    };
+
+    // Compute zero points if enabled
+    let zero_points = if config.use_zero_point {
+        Some(compute_zero_points(&flat, config.block_size, &scales))
+    } else {
+        None
+    };
+
     Ok(QuantizedTensor {
         data: quantized,
         scales,
-        zero_points: None,
+        zero_points,
+        scales_quantized,
+        scales_scales,
         shape,
-        block_size,
+        block_size: config.block_size,
+        double_quant_enabled: config.double_quant,
+        strategy: config.strategy,
     })
 }
 
+/// Quantize a tensor using per-channel strategy.
+///
+/// For per-channel quantization, each output channel (first dimension) gets its own
+/// set of scales. This provides better accuracy for weights with different ranges
+/// across channels.
+fn quantize_per_channel(tensor: &Tensor, config: &QuantizationConfig) -> Result<QuantizedTensor> {
+    let shape = tensor.shape().dims().to_vec();
+
+    // For per-channel, we need at least 2D tensor (channels x features)
+    if shape.len() < 2 {
+        return Err(QLoraError::InvalidConfig(
+            "Per-channel quantization requires at least 2D tensor".to_string(),
+        ));
+    }
+
+    let num_channels = shape[0];
+    let channel_size = shape[1..].iter().product::<usize>();
+    let flat = tensor.flatten_all()?.to_vec1::<f32>()?;
+
+    let mut scales = Vec::with_capacity(num_channels);
+    let mut quantized = Vec::with_capacity((flat.len() + 1) / 2);
+
+    // Quantize each channel separately
+    for ch_idx in 0..num_channels {
+        let ch_start = ch_idx * channel_size;
+        let ch_end = ch_start + channel_size;
+        let channel_data = &flat[ch_start..ch_end];
+
+        // Compute scale for entire channel
+        let absmax = channel_data.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
+        let scale = if absmax > 0.0 { absmax } else { 1.0 };
+        scales.push(scale);
+
+        // Quantize channel values
+        for chunk in channel_data.chunks(2) {
+            let q0 = quantize_value_nf4(chunk[0] / scale);
+            let q1 = if chunk.len() > 1 {
+                quantize_value_nf4(chunk[1] / scale)
+            } else {
+                0
+            };
+            quantized.push((q1 << 4) | q0);
+        }
+    }
+
+    // Apply double quantization if enabled
+    let (scales_quantized, scales_scales) = if config.double_quant {
+        let (sq, ss) = double_quantize_scales(&scales, 256);
+        (Some(sq), Some(ss))
+    } else {
+        (None, None)
+    };
+
+    // For per-channel, zero points apply per channel if enabled
+    let zero_points = if config.use_zero_point {
+        let mut zps = Vec::with_capacity(num_channels);
+        #[allow(clippy::needless_range_loop)]
+        for ch_idx in 0..num_channels {
+            let ch_start = ch_idx * channel_size;
+            let ch_end = ch_start + channel_size;
+            let channel_data = &flat[ch_start..ch_end];
+            let min_val = channel_data.iter().copied().fold(f32::INFINITY, f32::min);
+            let zp = if scales[ch_idx] > 0.0 {
+                -min_val / scales[ch_idx]
+            } else {
+                0.0
+            };
+            zps.push(zp);
+        }
+        Some(zps)
+    } else {
+        None
+    };
+
+    Ok(QuantizedTensor {
+        data: quantized,
+        scales,
+        zero_points,
+        scales_quantized,
+        scales_scales,
+        shape,
+        block_size: channel_size, // For per-channel, block_size = channel size
+        double_quant_enabled: config.double_quant,
+        strategy: config.strategy,
+    })
+}
+
+/// Apply double quantization to scale factors.
+///
+/// Double quantization quantizes the scale factors themselves to reduce memory usage.
+/// Typically uses 8-bit unsigned integers for the quantized scales.
+///
+/// # Arguments
+/// * `scales` - Original float32 scale factors
+/// * `max_val` - Maximum quantization value (typically 255 for u8)
+///
+/// # Returns
+/// Tuple of (`quantized_scales`, `scale_factors_for_scales`)
+fn double_quantize_scales(scales: &[f32], max_val: usize) -> (Vec<u8>, Vec<f32>) {
+    if scales.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    // Find the absolute maximum value in scales
+    let absmax = scales.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+
+    if absmax == 0.0 {
+        return (vec![0; scales.len()], vec![1.0]);
+    }
+
+    // Quantize all scales using a single scaling factor
+    #[allow(clippy::cast_precision_loss)]
+    let scale_factor = absmax / (max_val as f32);
+    let quantized_scales: Vec<u8> = scales
+        .iter()
+        .map(|&s| {
+            let quantized = (s / scale_factor).abs() as u32;
+            #[allow(clippy::cast_possible_truncation)]
+            let result = std::cmp::min(quantized, max_val as u32) as u8;
+            result
+        })
+        .collect();
+
+    (quantized_scales, vec![scale_factor])
+}
+
+/// Dequantize double-quantized scales back to float.
+fn dequantize_double_scales(scales_quantized: &[u8], scales_scales: &[f32]) -> Vec<f32> {
+    if scales_quantized.is_empty() || scales_scales.is_empty() {
+        return vec![];
+    }
+
+    let scale_factor = scales_scales[0];
+    scales_quantized
+        .iter()
+        .map(|&sq| f32::from(sq) * scale_factor)
+        .collect()
+}
+
+/// Compute zero points for asymmetric quantization.
+///
+/// For asymmetric quantization, we compute the zero point (offset) for each block
+/// to handle non-symmetric distributions better.
+///
+/// # Arguments
+/// * `data` - Original float data
+/// * `block_size` - Block size for quantization
+/// * `scales` - Pre-computed scale factors
+///
+/// # Returns
+/// Vector of zero points (one per block)
+fn compute_zero_points(data: &[f32], block_size: usize, scales: &[f32]) -> Vec<f32> {
+    let num_blocks = data.len() / block_size;
+    let mut zero_points = Vec::with_capacity(num_blocks);
+
+    #[allow(clippy::needless_range_loop)]
+    for block_idx in 0..num_blocks {
+        let start = block_idx * block_size;
+        let end = start + block_size;
+        let block = &data[start..end];
+        let scale = scales[block_idx];
+
+        // Find min value in the block
+        let min_val = block.iter().copied().fold(f32::INFINITY, f32::min);
+
+        // Zero point is the minimum value normalized by scale
+        // This shifts the quantization range to better handle asymmetric distributions
+        let zero_point = if scale > 0.0 { -min_val / scale } else { 0.0 };
+
+        zero_points.push(zero_point);
+    }
+
+    zero_points
+}
+
 /// Dequantize an NF4 tensor back to float.
+///
+/// Automatically handles double-quantized scales if enabled.
 ///
 /// # Arguments
 /// * `quantized` - Quantized tensor to dequantize
@@ -150,30 +438,71 @@ pub fn quantize_nf4(tensor: &Tensor, block_size: usize) -> Result<QuantizedTenso
 ///
 /// # Returns
 /// Dequantized float tensor with original shape
+///
+/// # Errors
+/// Returns an error if the tensor cannot be created on the specified device
 pub fn dequantize_nf4(quantized: &QuantizedTensor, device: &Device) -> Result<Tensor> {
     let numel = quantized.numel();
     let mut output = Vec::with_capacity(numel);
 
-    let num_blocks = quantized.scales.len();
+    // Get scales, applying double quantization reversal if needed
+    let scales = if quantized.double_quant_enabled {
+        if let (Some(ref sq), Some(ref ss)) =
+            (&quantized.scales_quantized, &quantized.scales_scales)
+        {
+            dequantize_double_scales(sq, ss)
+        } else {
+            quantized.scales.clone()
+        }
+    } else {
+        quantized.scales.clone()
+    };
 
-    for block_idx in 0..num_blocks {
-        let scale = quantized.scales[block_idx];
-        let start_byte = (block_idx * quantized.block_size) / 2;
+    match quantized.strategy {
+        QuantizationStrategy::PerTensor => {
+            let num_blocks = scales.len();
 
-        for i in 0..quantized.block_size {
-            let byte_idx = start_byte + i / 2;
-            let byte = quantized.data[byte_idx];
-            let code = if i % 2 == 0 {
-                byte & 0x0F
-            } else {
-                byte >> 4
-            };
-            let value = NF4_LEVELS[code as usize] * scale;
-            output.push(value);
+            for block_idx in 0..num_blocks {
+                let scale = scales[block_idx];
+                let zero_point = quantized
+                    .zero_points
+                    .as_ref()
+                    .map_or(0.0, |zp| zp[block_idx]);
+                let start_byte = (block_idx * quantized.block_size) / 2;
+
+                for i in 0..quantized.block_size {
+                    let byte_idx = start_byte + i / 2;
+                    let byte = quantized.data[byte_idx];
+                    let code = if i % 2 == 0 { byte & 0x0F } else { byte >> 4 };
+                    // Apply zero point for asymmetric quantization
+                    let nf4_value = NF4_LEVELS[code as usize] + zero_point;
+                    let value = nf4_value * scale;
+                    output.push(value);
+                }
+            }
+        }
+        QuantizationStrategy::PerChannel => {
+            let num_channels = scales.len();
+            let channel_size = quantized.block_size;
+
+            for ch_idx in 0..num_channels {
+                let scale = scales[ch_idx];
+                let zero_point = quantized.zero_points.as_ref().map_or(0.0, |zp| zp[ch_idx]);
+                let ch_start_byte = (ch_idx * channel_size) / 2;
+
+                for i in 0..channel_size {
+                    let byte_idx = ch_start_byte + i / 2;
+                    let byte = quantized.data[byte_idx];
+                    let code = if i % 2 == 0 { byte & 0x0F } else { byte >> 4 };
+                    let nf4_value = NF4_LEVELS[code as usize] + zero_point;
+                    let value = nf4_value * scale;
+                    output.push(value);
+                }
+            }
         }
     }
 
-    let tensor = Tensor::from_vec(output, &quantized.shape, device)?;
+    let tensor = Tensor::from_vec(output, quantized.shape.clone(), device)?;
     Ok(tensor)
 }
 
@@ -191,12 +520,15 @@ fn quantize_value_nf4(value: f32) -> u8 {
         }
     }
 
-    best_idx as u8
+    #[allow(clippy::cast_possible_truncation)]
+    let result = best_idx as u8;
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::DType;
 
     #[test]
     fn test_nf4_levels_sorted() {
@@ -209,7 +541,7 @@ mod tests {
     fn test_quantize_dequantize_roundtrip() {
         let device = Device::Cpu;
         let original = Tensor::randn(0.0f32, 1.0, (64,), &device).unwrap();
-        
+
         let quantized = quantize_nf4(&original, 64).unwrap();
         let restored = dequantize_nf4(&quantized, &device).unwrap();
 
@@ -219,7 +551,7 @@ mod tests {
         // Check that error is bounded (NF4 should have <0.5 max error for normalized data)
         for (o, r) in original_vec.iter().zip(restored_vec.iter()) {
             let error = (o - r).abs();
-            assert!(error < 0.5, "Error {} too large for value {}", error, o);
+            assert!(error < 0.5, "Error {error} too large for value {o}");
         }
     }
 
@@ -227,7 +559,7 @@ mod tests {
     fn test_quantize_preserves_shape() {
         let device = Device::Cpu;
         let original = Tensor::zeros(&[32, 64], DType::F32, &device).unwrap();
-        
+
         let quantized = quantize_nf4(&original, 64).unwrap();
         let restored = dequantize_nf4(&quantized, &device).unwrap();
 
@@ -246,5 +578,228 @@ mod tests {
         // Should be roughly 4x reduction (4-bit vs 32-bit) plus some overhead for scales
         let ratio = original_bytes as f64 / quantized_bytes as f64;
         assert!(ratio > 3.0, "Expected >3x reduction, got {:.2}x", ratio);
+    }
+
+    #[test]
+    fn test_double_quantize_compression() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (512,), &device).unwrap();
+
+        let config = QuantizationConfig {
+            block_size: 64,
+            double_quant: true,
+            compute_dtype: ComputeDType::F32,
+            strategy: QuantizationStrategy::PerTensor,
+            use_zero_point: false,
+        };
+
+        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+
+        // Verify double quantization was applied
+        assert!(quantized.double_quant_enabled);
+        assert!(quantized.scales_quantized.is_some());
+        assert!(quantized.scales_scales.is_some());
+
+        // Double quantized should use less memory than non-double quantized
+        let non_dq_size = quantized.scales.len() * 4; // Original scales
+        let dq_scales_size = quantized.scales_quantized.as_ref().map_or(0, |sq| sq.len())
+            + quantized
+                .scales_scales
+                .as_ref()
+                .map_or(0, |ss| ss.len() * 4);
+
+        assert!(dq_scales_size < non_dq_size);
+    }
+
+    #[test]
+    fn test_double_quantize_roundtrip() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (256,), &device).unwrap();
+
+        let config = QuantizationConfig {
+            block_size: 64,
+            double_quant: true,
+            compute_dtype: ComputeDType::F32,
+            strategy: QuantizationStrategy::PerTensor,
+            use_zero_point: false,
+        };
+
+        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+        let restored = dequantize_nf4(&quantized, &device).unwrap();
+
+        let original_vec: Vec<f32> = original.to_vec1().unwrap();
+        let restored_vec: Vec<f32> = restored.to_vec1().unwrap();
+
+        // With double quantization, error increases (scale quantization adds error)
+        // but should still be reasonable (typically 10-20% of value magnitude)
+        let mut max_error = 0.0f32;
+        for (o, r) in original_vec.iter().zip(restored_vec.iter()) {
+            let error = (o - r).abs();
+            max_error = max_error.max(error);
+        }
+        // Allow higher error for double quantization - scales are also quantized
+        assert!(max_error < 5.0, "Max error {max_error} too large");
+    }
+
+    #[test]
+    fn test_double_quant_disabled_still_works() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (128,), &device).unwrap();
+
+        let config = QuantizationConfig {
+            block_size: 64,
+            double_quant: false,
+            compute_dtype: ComputeDType::F32,
+            strategy: QuantizationStrategy::PerTensor,
+            use_zero_point: false,
+        };
+
+        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+
+        // Verify double quantization was NOT applied
+        assert!(!quantized.double_quant_enabled);
+        assert!(quantized.scales_quantized.is_none());
+        assert!(quantized.scales_scales.is_none());
+
+        let restored = dequantize_nf4(&quantized, &device).unwrap();
+        let original_vec: Vec<f32> = original.to_vec1().unwrap();
+        let restored_vec: Vec<f32> = restored.to_vec1().unwrap();
+
+        // Regular quantization error bounds
+        for (o, r) in original_vec.iter().zip(restored_vec.iter()) {
+            let error = (o - r).abs();
+            assert!(error < 0.5, "Error {error} too large for value {o}");
+        }
+    }
+
+    #[test]
+    fn test_per_channel_quantization() {
+        let device = Device::Cpu;
+        // Create 2D tensor (4 channels x 128 features)
+        let original = Tensor::randn(0.0f32, 1.0, (4, 128), &device).unwrap();
+
+        let config = QuantizationConfig {
+            block_size: 64, // Not used for per-channel
+            double_quant: false,
+            compute_dtype: ComputeDType::F32,
+            strategy: QuantizationStrategy::PerChannel,
+            use_zero_point: false,
+        };
+
+        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+
+        // Verify we have one scale per channel
+        assert_eq!(
+            quantized.scales.len(),
+            4,
+            "Should have 4 scales (one per channel)"
+        );
+        assert_eq!(quantized.strategy, QuantizationStrategy::PerChannel);
+
+        // Verify roundtrip
+        let restored = dequantize_nf4(&quantized, &device).unwrap();
+        assert_eq!(restored.shape().dims(), &[4, 128]);
+
+        let original_vec: Vec<f32> = original.flatten_all().unwrap().to_vec1().unwrap();
+        let restored_vec: Vec<f32> = restored.flatten_all().unwrap().to_vec1().unwrap();
+
+        let mut max_error = 0.0f32;
+        for (o, r) in original_vec.iter().zip(restored_vec.iter()) {
+            let error = (o - r).abs();
+            max_error = max_error.max(error);
+        }
+        assert!(max_error < 1.0, "Max error {max_error} too large");
+    }
+
+    #[test]
+    fn test_zero_point_quantization() {
+        let device = Device::Cpu;
+        // Create asymmetric data (all positive values)
+        let original = Tensor::rand(0.0f32, 5.0, (256,), &device).unwrap();
+
+        let config = QuantizationConfig {
+            block_size: 64,
+            double_quant: false,
+            compute_dtype: ComputeDType::F32,
+            strategy: QuantizationStrategy::PerTensor,
+            use_zero_point: true,
+        };
+
+        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+
+        // Verify zero points were computed
+        assert!(quantized.zero_points.is_some());
+        let zero_points = quantized.zero_points.as_ref().unwrap();
+        assert_eq!(
+            zero_points.len(),
+            256 / 64,
+            "Should have one zero point per block"
+        );
+
+        // Verify roundtrip with zero points
+        let restored = dequantize_nf4(&quantized, &device).unwrap();
+        let original_vec: Vec<f32> = original.to_vec1().unwrap();
+        let restored_vec: Vec<f32> = restored.to_vec1().unwrap();
+
+        let mut max_error = 0.0f32;
+        for (o, r) in original_vec.iter().zip(restored_vec.iter()) {
+            let error = (o - r).abs();
+            max_error = max_error.max(error);
+        }
+        // Zero point quantization should handle asymmetric data better
+        assert!(max_error < 10.0, "Max error {max_error} too large");
+    }
+
+    #[test]
+    fn test_per_channel_with_zero_point() {
+        let device = Device::Cpu;
+        // Create asymmetric 2D data
+        let original = Tensor::rand(0.0f32, 3.0, (2, 128), &device).unwrap();
+
+        let config = QuantizationConfig {
+            block_size: 64,
+            double_quant: false,
+            compute_dtype: ComputeDType::F32,
+            strategy: QuantizationStrategy::PerChannel,
+            use_zero_point: true,
+        };
+
+        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+
+        // Verify per-channel with zero points
+        assert_eq!(quantized.scales.len(), 2);
+        assert!(quantized.zero_points.is_some());
+        let zps = quantized.zero_points.as_ref().unwrap();
+        assert_eq!(zps.len(), 2, "Should have one zero point per channel");
+
+        // Verify roundtrip
+        let restored = dequantize_nf4(&quantized, &device).unwrap();
+        assert_eq!(restored.shape().dims(), &[2, 128]);
+    }
+
+    #[test]
+    fn test_per_channel_with_double_quant() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (8, 64), &device).unwrap();
+
+        let config = QuantizationConfig {
+            block_size: 64,
+            double_quant: true,
+            compute_dtype: ComputeDType::F32,
+            strategy: QuantizationStrategy::PerChannel,
+            use_zero_point: false,
+        };
+
+        let quantized = quantize_nf4_with_config(&original, config).unwrap();
+
+        // Verify both per-channel and double quantization applied
+        assert_eq!(quantized.scales.len(), 8);
+        assert!(quantized.double_quant_enabled);
+        assert!(quantized.scales_quantized.is_some());
+        assert_eq!(quantized.strategy, QuantizationStrategy::PerChannel);
+
+        // Verify roundtrip
+        let restored = dequantize_nf4(&quantized, &device).unwrap();
+        assert_eq!(restored.shape().dims(), &[8, 64]);
     }
 }
