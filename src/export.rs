@@ -95,30 +95,35 @@ pub fn export_gguf<P: AsRef<Path>>(
         // Quantized values
         file.write_all(&tensor.data)
             .map_err(|e| QLoraError::GgufExport(format!("Failed to write tensor data: {e}")))?;
-        
+
         // Scales
         for &scale in &tensor.scales {
             file.write_all(&scale.to_le_bytes())
                 .map_err(|e| QLoraError::GgufExport(format!("Failed to write scale: {e}")))?;
         }
-        
+
         // Zero points
         if let Some(ref zp) = tensor.zero_points {
             for &zp_val in zp {
-                file.write_all(&zp_val.to_le_bytes())
-                    .map_err(|e| QLoraError::GgufExport(format!("Failed to write zero point: {e}")))?;
+                file.write_all(&zp_val.to_le_bytes()).map_err(|e| {
+                    QLoraError::GgufExport(format!("Failed to write zero point: {e}"))
+                })?;
             }
         }
-        
+
         // Double-quantized data
         if let Some(ref scales_q) = tensor.scales_quantized {
-            file.write_all(scales_q)
-                .map_err(|e| QLoraError::GgufExport(format!("Failed to write double-quantized scales: {e}")))?;
+            file.write_all(scales_q).map_err(|e| {
+                QLoraError::GgufExport(format!("Failed to write double-quantized scales: {e}"))
+            })?;
         }
         if let Some(ref scales_s) = tensor.scales_scales {
             for &scale_s in scales_s {
-                file.write_all(&scale_s.to_le_bytes())
-                    .map_err(|e| QLoraError::GgufExport(format!("Failed to write double-quantized scale factors: {e}")))?;
+                file.write_all(&scale_s.to_le_bytes()).map_err(|e| {
+                    QLoraError::GgufExport(format!(
+                        "Failed to write double-quantized scale factors: {e}"
+                    ))
+                })?;
             }
         }
     }

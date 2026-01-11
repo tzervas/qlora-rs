@@ -162,7 +162,7 @@ pub struct QLoraLayer {
 
 impl QLoraLayer {
     /// Create a new `QLoRA` layer.
-    #[must_use] 
+    #[must_use]
     pub fn new(linear: QuantizedLinear) -> Self {
         Self { linear }
     }

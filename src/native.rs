@@ -183,16 +183,16 @@ fn write_tensor_headers<W: Write>(
         // Shape
         let shape_len = u32::try_from(tensor.shape.len())
             .map_err(|_| QLoraError::NativeExport("Tensor shape too large".into()))?;
-        writer.write_all(&shape_len.to_le_bytes()).map_err(|e| {
-            QLoraError::NativeExport(format!("Failed to write shape length: {e}"))
-        })?;
+        writer
+            .write_all(&shape_len.to_le_bytes())
+            .map_err(|e| QLoraError::NativeExport(format!("Failed to write shape length: {e}")))?;
 
         for &dim in &tensor.shape {
             let dim = u64::try_from(dim)
                 .map_err(|_| QLoraError::NativeExport("Dimension too large".into()))?;
-            writer.write_all(&dim.to_le_bytes()).map_err(|e| {
-                QLoraError::NativeExport(format!("Failed to write dimension: {e}"))
-            })?;
+            writer
+                .write_all(&dim.to_le_bytes())
+                .map_err(|e| QLoraError::NativeExport(format!("Failed to write dimension: {e}")))?;
         }
 
         // Block size
@@ -250,7 +250,9 @@ fn write_tensor_data<W: Write>(writer: &mut W, tensor: &QuantizedTensor) -> Resu
     if let Some(ref scales_s) = tensor.scales_scales {
         for &scale_s in scales_s {
             writer.write_all(&scale_s.to_le_bytes()).map_err(|e| {
-                QLoraError::NativeExport(format!("Failed to write double-quantized scale factors: {e}"))
+                QLoraError::NativeExport(format!(
+                    "Failed to write double-quantized scale factors: {e}"
+                ))
             })?;
         }
     }
