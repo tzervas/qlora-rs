@@ -29,8 +29,8 @@ thiserror = "1.0"
 tracing = "0.1"
 anyhow = "1.0"
 
-# peft-rs dependency - now published on crates.io
-peft-rs = "0.4"
+# peft-rs dependency - use local path for workspace development
+peft-rs = { path = "../peft-rs" }
 
 # GGUF support (for future: gguf = "0.1")
 byteorder = "1.5"
