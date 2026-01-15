@@ -29,8 +29,8 @@ thiserror = "1.0"
 tracing = "0.1"
 anyhow = "1.0"
 
-# peft-rs dependency - use local path for workspace development
-peft-rs = { path = "../peft-rs" }
+# peft-rs dependency - use git repository for CI and workspace development
+peft-rs = { git = "https://github.com/tzervas/peft-rs" }
 
 # GGUF support (for future: gguf = "0.1")
 byteorder = "1.5"
@@ -66,3 +66,7 @@ pedantic = "allow"
 [[bench]]
 name = "quantization"
 harness = false
+
+# Optional: Uncomment to use local peft-rs for development
+# [patch."https://github.com/tzervas/peft-rs"]
+# peft-rs = { path = "../peft-rs" }
