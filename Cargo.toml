@@ -68,5 +68,5 @@ name = "quantization"
 harness = false
 
 # Optional: Uncomment to use local peft-rs for development
-# [patch.'https://github.com/tzervas/peft-rs']
+# [patch."https://github.com/tzervas/peft-rs"]
 # peft-rs = { path = "../peft-rs" }
