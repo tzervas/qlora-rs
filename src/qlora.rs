@@ -3,6 +3,7 @@
 //! Combines quantized base weights with trainable `LoRA` adapters.
 
 use candle_core::{DType, Device, Tensor};
+use candle_nn::VarBuilder;
 use peft_rs::{Adapter, LoraConfig, LoraLayer};
 use serde::{Deserialize, Serialize};
 
@@ -62,6 +63,49 @@ impl QuantizedLinear {
         // Create LoRA adapter
         let lora =
             LoraLayer::new_with_zeros(in_features, out_features, config.lora.clone(), device)?;
+
+        Ok(Self {
+            quantized_weight,
+            cached_weight,
+            bias,
+            lora,
+        })
+    }
+
+    /// Create a quantized linear layer with trainable `LoRA` weights registered via `VarBuilder`.
+    ///
+    /// This constructor ensures LoRA A/B weights are tracked for gradient computation.
+    /// Use this for training; use `from_weight` for inference.
+    ///
+    /// # Arguments
+    /// * `weight` - Full-precision weight tensor to quantize
+    /// * `bias` - Optional bias tensor (kept in full precision)
+    /// * `config` - `QLoRA` configuration
+    /// * `vb` - `VarBuilder` backed by `VarMap` for gradient tracking
+    ///
+    /// # Errors
+    /// Returns error if weight tensor has invalid shape or quantization fails
+    pub fn from_weight_with_varbuilder(
+        weight: &Tensor,
+        bias: Option<Tensor>,
+        config: &QLoraConfig,
+        vb: VarBuilder,
+    ) -> Result<Self> {
+        let shape = weight.shape().dims();
+        if shape.len() != 2 {
+            return Err(QLoraError::InvalidConfig("weight must be 2D".into()));
+        }
+        let (out_features, in_features) = (shape[0], shape[1]);
+        let device = weight.device();
+
+        // Quantize the base weight
+        let quantized_weight = quantize_nf4(weight, config.quantization.block_size)?;
+
+        // Pre-dequantize and cache the weight to avoid repeated dequantization
+        let cached_weight = Some(dequantize_nf4(&quantized_weight, device)?);
+
+        // Create LoRA adapter with VarBuilder for gradient tracking
+        let lora = LoraLayer::new(in_features, out_features, config.lora.clone(), vb)?;
 
         Ok(Self {
             quantized_weight,
