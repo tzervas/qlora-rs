@@ -44,5 +44,6 @@ pub use formats::{export_model, export_native_format, ExportConfig, ExportFormat
 pub use qlora::{QLoraConfig, QLoraLayer, QuantizedLinear};
 pub use quantization::{dequantize_nf4, quantize_nf4, QuantizationConfig, QuantizedTensor};
 pub use training::{
-    cross_entropy_loss, QLoraTrainer, QLoraTrainingConfig, TrainingMetrics,
+    cross_entropy_loss, PagedAdamW, PagedAdamWState, QLoraTrainer, QLoraTrainingConfig,
+    TrainingMetrics,
 };
