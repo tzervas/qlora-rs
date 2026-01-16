@@ -2,8 +2,8 @@
 name = "qlora-rs"
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.70"
-license = "MIT OR Apache-2.0"
+rust-version = "1.92"
+license = "MIT"
 authors = ["Tyler Zervas <tz-dev@vectorweight.com>"]
 description = "4-bit quantized LoRA (QLoRA) implementation with dual GGUF and Candle native export for Rust"
 repository = "https://github.com/tzervas/qlora-rs"
