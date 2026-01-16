@@ -163,15 +163,21 @@ Working Branch (feature/*) → PR → dev → PR → testing → PR → main (ta
 
 **Completed Version**: 0.1.1 (24/24 tests passing)
 
-### Phase 1.3: Advanced Quantization Features (Planned)
+### Phase 1.3: Advanced Quantization Features ✅ Complete
 
-- [ ] Per-channel quantization
-- [ ] Zero-point quantization (asymmetric)
-- [ ] Mixed precision support
-- [ ] Quantization-aware padding
+- [x] Per-channel quantization
+- [x] Zero-point quantization (asymmetric)
+- [x] Mixed precision support (F16, BF16, F32 dequantization)
+- [x] Quantization-aware padding
 
-**Estimated Effort**: 1-2 weeks  
-**Target Version**: 0.1.0-alpha.3
+**Completed**: All Phase 1.3 features implemented with 37/37 tests passing
+
+**New Features**:
+- `dequantize_nf4_with_dtype()` - Mixed precision dequantization
+- `pad_for_quantization()` - Block-aligned padding
+- `pad_for_quantization_with_info()` - Padding with metadata for restoration
+- `unpad_tensor()` - Remove padding after dequantization
+- `PaddingInfo` struct for tracking padding metadata
 
 ### Phase 2: Training Support (Future)
 
