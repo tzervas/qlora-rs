@@ -207,7 +207,7 @@ fn quantize_per_tensor(tensor: &Tensor, config: &QuantizationConfig) -> Result<Q
 
     let num_blocks = numel / config.block_size;
     let mut scales = Vec::with_capacity(num_blocks);
-    let mut quantized = Vec::with_capacity((numel + 1) / 2);
+    let mut quantized = Vec::with_capacity(numel.div_ceil(2));
 
     for block_idx in 0..num_blocks {
         let start = block_idx * config.block_size;
@@ -280,7 +280,7 @@ fn quantize_per_channel(tensor: &Tensor, config: &QuantizationConfig) -> Result<
     let flat = tensor.flatten_all()?.to_vec1::<f32>()?;
 
     let mut scales = Vec::with_capacity(num_channels);
-    let mut quantized = Vec::with_capacity((flat.len() + 1) / 2);
+    let mut quantized = Vec::with_capacity(flat.len().div_ceil(2));
 
     // Quantize each channel separately
     for ch_idx in 0..num_channels {
@@ -561,7 +561,7 @@ pub fn dequantize_nf4_with_dtype(
 /// * `pad_value` - Value to use for padding (typically 0.0)
 ///
 /// # Returns
-/// 1D padded tensor with size divisible by block_size
+/// 1D padded tensor with size divisible by `block_size`
 ///
 /// # Errors
 /// Returns an error if the tensor cannot be processed
@@ -599,7 +599,7 @@ pub fn pad_for_quantization(tensor: &Tensor, block_size: usize, pad_value: f32) 
 
     // Create padded vector
     let mut padded = flat;
-    padded.extend(std::iter::repeat(pad_value).take(pad_count));
+    padded.extend(std::iter::repeat_n(pad_value, pad_count));
 
     // Return as 1D tensor
     let padded_tensor = Tensor::from_vec(padded, (numel + pad_count,), device)?;
@@ -623,7 +623,7 @@ pub struct PaddingInfo {
 ///
 /// This function pads the tensor for quantization and returns padding metadata
 /// that can be used to remove the padding after dequantization.
-/// The tensor is flattened and padded to be divisible by block_size.
+/// The tensor is flattened and padded to be divisible by `block_size`.
 ///
 /// # Arguments
 /// * `tensor` - Input tensor to pad (must be F32 dtype)
@@ -631,7 +631,7 @@ pub struct PaddingInfo {
 /// * `pad_value` - Value to use for padding (typically 0.0)
 ///
 /// # Returns
-/// Tuple of (1D padded tensor, padding_info with original shape)
+/// Tuple of (1D padded tensor, `PaddingInfo` with original shape)
 ///
 /// # Errors
 /// Returns an error if the tensor cannot be processed
@@ -675,7 +675,7 @@ pub fn pad_for_quantization_with_info(
 
     let flat = tensor.flatten_all()?.to_vec1::<f32>()?;
     let mut padded = flat;
-    padded.extend(std::iter::repeat(pad_value).take(pad_count));
+    padded.extend(std::iter::repeat_n(pad_value, pad_count));
 
     let padded_len = numel + pad_count;
     let padded_tensor = Tensor::from_vec(padded, (padded_len,), device)?;
@@ -797,14 +797,15 @@ mod tests {
     fn test_memory_reduction() {
         let device = Device::Cpu;
         let original = Tensor::zeros(&[1024, 1024], DType::F32, &device).unwrap();
-        let original_bytes = 1024 * 1024 * 4; // f32 = 4 bytes
+        let original_bytes: i32 = 1024 * 1024 * 4; // f32 = 4 bytes
 
         let quantized = quantize_nf4(&original, 64).unwrap();
         let quantized_bytes = quantized.size_bytes();
 
         // Should be roughly 4x reduction (4-bit vs 32-bit) plus some overhead for scales
-        let ratio = original_bytes as f64 / quantized_bytes as f64;
-        assert!(ratio > 3.0, "Expected >3x reduction, got {:.2}x", ratio);
+        #[allow(clippy::cast_precision_loss)]
+        let ratio = f64::from(original_bytes) / quantized_bytes as f64;
+        assert!(ratio > 3.0, "Expected >3x reduction, got {ratio:.2}x");
     }
 
     #[test]
@@ -829,7 +830,7 @@ mod tests {
 
         // Double quantized should use less memory than non-double quantized
         let non_dq_size = quantized.scales.len() * 4; // Original scales
-        let dq_scales_size = quantized.scales_quantized.as_ref().map_or(0, |sq| sq.len())
+        let dq_scales_size = quantized.scales_quantized.as_ref().map_or(0, Vec::len)
             + quantized
                 .scales_scales
                 .as_ref()
@@ -1179,6 +1180,7 @@ mod tests {
     fn test_padding_2d_no_padding_roundtrip() {
         let device = Device::Cpu;
         // 8x8 = 64 elements, exactly divisible by 64 (no padding needed)
+        #[allow(clippy::cast_precision_loss)]
         let original_data: Vec<f32> = (0..64).map(|i| i as f32).collect();
         let original = Tensor::from_vec(original_data.clone(), (8, 8), &device).unwrap();
 
@@ -1204,7 +1206,7 @@ mod tests {
         let result = pad_for_quantization(&f16_tensor, 64, 0.0);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("F32"), "Error should mention F32 requirement: {}", err_msg);
+        assert!(err_msg.contains("F32"), "Error should mention F32 requirement: {err_msg}");
 
         let result = pad_for_quantization_with_info(&f16_tensor, 64, 0.0);
         assert!(result.is_err());

@@ -8,7 +8,7 @@
 //! Using FP16 results in ~20% training failure rate due to numerical instability.
 //!
 //! # References
-//! - QLoRA paper: <https://arxiv.org/abs/2305.14314>
+//! - `QLoRA` paper: <https://arxiv.org/abs/2305.14314>
 //! - PEFT `prepare_model_for_kbit_training`: upcasts non-quantized modules to FP32
 
 use candle_core::{DType, Device, Tensor};
@@ -32,7 +32,7 @@ use crate::quantization::{
 ///
 /// # Target Modules
 ///
-/// The `target_modules` field controls which linear layers get LoRA adapters:
+/// The `target_modules` field controls which linear layers get `LoRA` adapters:
 /// - Minimal: `["q_proj", "v_proj"]` - 98% of full fine-tuning quality
 /// - Recommended: `["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]`
 ///   - Matches full fine-tuning quality (~99.3%)
@@ -57,7 +57,7 @@ pub struct QLoraConfig {
     pub lora: LoraConfig,
     /// Quantization configuration (block size, double quant).
     pub quantization: QuantizationConfig,
-    /// Target modules to apply LoRA to.
+    /// Target modules to apply `LoRA` to.
     /// Default: all linear layers in transformer blocks.
     #[serde(default = "default_target_modules")]
     pub target_modules: Vec<String>,
@@ -106,11 +106,11 @@ impl Default for QLoraConfig {
 impl QLoraConfig {
     /// Create preset targeting all linear layers with BF16 compute.
     ///
-    /// **Recommended for training**. Matches QLoRA paper configuration.
+    /// **Recommended for training**. Matches `QLoRA` paper configuration.
     ///
     /// # Arguments
-    /// * `r` - LoRA rank (typical: 8-64)
-    /// * `alpha` - LoRA scaling factor (typical: 16-32)
+    /// * `r` - `LoRA` rank (typical: 8-64)
+    /// * `alpha` - `LoRA` scaling factor (typical: 16-32)
     #[must_use]
     pub fn preset_all_bf16(r: usize, alpha: usize) -> Self {
         Self {
@@ -166,14 +166,15 @@ impl QLoraConfig {
         }
     }
 
-    /// Check if a module should have LoRA applied.
+    /// Check if a module should have `LoRA` applied.
     #[must_use]
     pub fn is_target(&self, module_name: &str) -> bool {
         self.target_modules.iter().any(|t| module_name.contains(t))
     }
 
-    /// Get the LoRA scaling factor (alpha / r).
+    /// Get the `LoRA` scaling factor (alpha / r).
     #[must_use]
+    #[allow(clippy::cast_precision_loss)]
     pub fn scale(&self) -> f64 {
         self.lora.alpha as f64 / self.lora.r as f64
     }
@@ -278,7 +279,7 @@ impl QuantizedLinear {
 
     /// Create a quantized linear layer with trainable `LoRA` weights registered via `VarBuilder`.
     ///
-    /// This constructor ensures LoRA A/B weights are tracked for gradient computation.
+    /// This constructor ensures `LoRA` A/B weights are tracked for gradient computation.
     /// Use this for training; use `from_weight` for inference.
     ///
     /// # Arguments
@@ -408,6 +409,12 @@ impl QuantizedLinear {
         self.cached_weight.is_some()
     }
 
+    /// Get the `QLoRA` configuration used to create this layer.
+    #[must_use]
+    pub fn config(&self) -> &QLoraConfig {
+        &self.config
+    }
+
     /// Get the `LoRA` adapter.
     #[must_use]
     pub fn lora(&self) -> &LoraLayer {
@@ -417,6 +424,16 @@ impl QuantizedLinear {
     /// Get mutable access to the `LoRA` adapter.
     pub fn lora_mut(&mut self) -> &mut LoraLayer {
         &mut self.lora
+    }
+
+    /// Get the `LoRA` A and B weight tensors.
+    ///
+    /// Returns (`lora_a`, `lora_b`) where:
+    /// - `lora_a` has shape `[r, in_features]`
+    /// - `lora_b` has shape `[out_features, r]`
+    #[must_use]
+    pub fn lora_weights(&self) -> (&Tensor, &Tensor) {
+        self.lora.weights()
     }
 
     /// Get the number of trainable parameters (`LoRA` only).
@@ -492,7 +509,161 @@ mod tests {
         let actual_size = layer.memory_bytes();
 
         // Should be significantly smaller due to quantization
+        #[allow(clippy::cast_precision_loss)]
         let ratio = f64::from(full_size) / actual_size as f64;
         assert!(ratio > 2.0, "Expected >2x reduction, got {ratio:.2}x");
+    }
+
+    // Tests for QLoraConfig presets and helper methods
+    // Addresses PR #10 review comment: "No test coverage for presets and helper methods"
+
+    #[test]
+    fn test_preset_all_bf16() {
+        let config = QLoraConfig::preset_all_bf16(64, 16);
+        
+        // Check LoRA config
+        assert_eq!(config.lora.r, 64);
+        assert_eq!(config.lora.alpha, 16);
+        assert!((config.lora.dropout - 0.05).abs() < 1e-10);
+        
+        // Check quantization config
+        assert!(matches!(config.quantization.compute_dtype, ComputeDType::BF16));
+        assert!(config.quantization.double_quant);
+        
+        // Check target modules (should be all linear layers)
+        assert!(config.target_modules.contains(&"q_proj".to_string()));
+        assert!(config.target_modules.contains(&"k_proj".to_string()));
+        assert!(config.target_modules.contains(&"v_proj".to_string()));
+        assert!(config.target_modules.contains(&"o_proj".to_string()));
+        assert!(config.target_modules.contains(&"gate_proj".to_string()));
+        
+        // Should not cache weights by default (memory-optimal for training)
+        assert!(!config.cache_dequantized);
+    }
+
+    #[test]
+    fn test_preset_qv_bf16() {
+        let config = QLoraConfig::preset_qv_bf16(32, 8);
+        
+        // Check LoRA config
+        assert_eq!(config.lora.r, 32);
+        assert_eq!(config.lora.alpha, 8);
+        
+        // Check target modules (should only be Q/V)
+        assert_eq!(config.target_modules.len(), 2);
+        assert!(config.target_modules.contains(&"q_proj".to_string()));
+        assert!(config.target_modules.contains(&"v_proj".to_string()));
+        
+        // Should NOT contain other modules
+        assert!(!config.target_modules.contains(&"k_proj".to_string()));
+        assert!(!config.target_modules.contains(&"o_proj".to_string()));
+    }
+
+    #[test]
+    fn test_preset_inference() {
+        let config = QLoraConfig::preset_inference(16, 32);
+        
+        // Check LoRA config
+        assert_eq!(config.lora.r, 16);
+        assert_eq!(config.lora.alpha, 32);
+        
+        // Key difference: should cache weights for inference speed
+        assert!(config.cache_dequantized);
+        
+        // Should still use BF16 compute
+        assert!(matches!(config.quantization.compute_dtype, ComputeDType::BF16));
+    }
+
+    #[test]
+    fn test_is_target() {
+        let config = QLoraConfig::preset_all_bf16(8, 16);
+        
+        // Should match target modules
+        assert!(config.is_target("model.layer.q_proj"));
+        assert!(config.is_target("transformer.blocks.0.attn.v_proj"));
+        assert!(config.is_target("gate_proj"));
+        
+        // Should NOT match non-target modules
+        assert!(!config.is_target("embed_tokens"));
+        assert!(!config.is_target("lm_head"));
+        assert!(!config.is_target("layer_norm"));
+    }
+
+    #[test]
+    fn test_scale() {
+        let config = QLoraConfig::preset_all_bf16(64, 16);
+        let scale = config.scale();
+        
+        // scale = alpha / r = 16 / 64 = 0.25
+        assert!((scale - 0.25).abs() < 1e-10);
+        
+        let config2 = QLoraConfig::preset_all_bf16(8, 32);
+        let scale2 = config2.scale();
+        
+        // scale = alpha / r = 32 / 8 = 4.0
+        assert!((scale2 - 4.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_validate_for_training_success() {
+        let config = QLoraConfig::preset_all_bf16(8, 16);
+        assert!(config.validate_for_training().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_training_zero_rank() {
+        let mut config = QLoraConfig::preset_all_bf16(0, 16);
+        config.lora.r = 0;
+        
+        let result = config.validate_for_training();
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("rank"));
+        }
+    }
+
+    #[test]
+    fn test_validate_for_training_empty_targets() {
+        let mut config = QLoraConfig::preset_all_bf16(8, 16);
+        config.target_modules.clear();
+        
+        let result = config.validate_for_training();
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("target module"));
+        }
+    }
+
+    #[test]
+    fn test_default_config() {
+        let config = QLoraConfig::default();
+        
+        // Should use BF16 by default for training stability
+        assert!(matches!(config.quantization.compute_dtype, ComputeDType::BF16));
+        
+        // Should have standard LoRA defaults
+        assert_eq!(config.lora.r, 64);
+        assert_eq!(config.lora.alpha, 16);
+        
+        // Should target all linear layers
+        assert!(!config.target_modules.is_empty());
+        
+        // Should not cache by default (memory-optimal)
+        assert!(!config.cache_dequantized);
+    }
+
+    #[test]
+    fn test_lora_weights() {
+        let config = QLoraConfig::preset_all_bf16(8, 16);
+        let device = Device::Cpu;
+        let layer = QuantizedLinear::new(64, 128, &config, &device).unwrap();
+        
+        let (a_weight, b_weight) = layer.lora_weights();
+        
+        // A: [r, in_features] = [8, 64]
+        assert_eq!(a_weight.dims(), &[8, 64]);
+        
+        // B: [out_features, r] = [128, 8]
+        assert_eq!(b_weight.dims(), &[128, 8]);
     }
 }
