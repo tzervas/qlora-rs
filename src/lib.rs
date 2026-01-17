@@ -43,9 +43,9 @@ pub use error::{QLoraError, Result};
 pub use formats::{export_model, export_native_format, ExportConfig, ExportFormat};
 pub use qlora::{QLoraConfig, QLoraLayer, QuantizedLinear};
 pub use quantization::{
-    dequantize_nf4, dequantize_nf4_with_dtype, pad_for_quantization, pad_for_quantization_with_info,
-    quantize_nf4, unpad_tensor, ComputeDType, PaddingInfo, QuantizationConfig,
-    QuantizationStrategy, QuantizedTensor,
+    dequantize_nf4, dequantize_nf4_with_dtype, pad_for_quantization,
+    pad_for_quantization_with_info, quantize_nf4, unpad_tensor, ComputeDType, PaddingInfo,
+    QuantizationConfig, QuantizationStrategy, QuantizedTensor,
 };
 pub use training::{
     cross_entropy_loss, PagedAdamW, PagedAdamWState, QLoraTrainer, QLoraTrainingConfig,

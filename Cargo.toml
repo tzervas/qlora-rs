@@ -30,7 +30,7 @@ tracing = "0.1"
 anyhow = "1.0"
 
 # peft-rs dependency - use git repository for CI and workspace development
-peft-rs = { git = "https://github.com/tzervas/peft-rs" }
+peft-rs = { git = "https://github.com/tzervas/peft-rs", branch = "dev" }
 
 # GGUF support (for future: gguf = "0.1")
 byteorder = "1.5"

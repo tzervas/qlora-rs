@@ -64,7 +64,7 @@ impl Default for QLoraTrainingConfig {
             save_every: Some(500),
             warmup_steps: 100,
             use_paged_optimizer: true,
-            page_size: 1024 * 1024, // 1MB pages
+            page_size: 1024 * 1024,  // 1MB pages
             max_optimizer_memory: 0, // unlimited by default
         }
     }
@@ -140,37 +140,46 @@ impl PagedAdamWState {
     /// Returns error if device transfer fails.
     #[allow(clippy::if_not_else, clippy::excessive_nesting)]
     pub fn page_to_device(&mut self, name: &str, device: &Device) -> Result<(Tensor, Tensor)> {
-        let exp_avg = self.exp_avg.get(name)
+        let exp_avg = self
+            .exp_avg
+            .get(name)
             .ok_or_else(|| QLoraError::InvalidConfig(format!("No state for param: {name}")))?;
-        let exp_avg_sq = self.exp_avg_sq.get(name)
+        let exp_avg_sq = self
+            .exp_avg_sq
+            .get(name)
             .ok_or_else(|| QLoraError::InvalidConfig(format!("No state for param: {name}")))?;
 
         // Track GPU residency
         if !self.gpu_resident.contains(name) {
             let param_bytes = exp_avg.elem_count() * 4 * 2; // 2 states * f32
-            
+
             // Check memory limit and evict LRU if needed
             if self.max_gpu_memory > 0 {
-                while self.current_gpu_usage + param_bytes > self.max_gpu_memory && !self.access_order.is_empty() {
+                while self.current_gpu_usage + param_bytes > self.max_gpu_memory
+                    && !self.access_order.is_empty()
+                {
                     // Evict LRU (first in access_order)
                     if let Some(lru_name) = self.access_order.first().cloned() {
                         if lru_name != name {
                             self.gpu_resident.remove(&lru_name);
                             self.access_order.retain(|n| n != &lru_name);
-                            let lru_bytes = self.exp_avg.get(&lru_name)
+                            let lru_bytes = self
+                                .exp_avg
+                                .get(&lru_name)
                                 .map_or(0, |t| t.elem_count() * 4 * 2);
-                            self.current_gpu_usage = self.current_gpu_usage.saturating_sub(lru_bytes);
+                            self.current_gpu_usage =
+                                self.current_gpu_usage.saturating_sub(lru_bytes);
                         } else {
                             break; // Don't evict the param we're trying to page in
                         }
                     }
                 }
             }
-            
+
             self.gpu_resident.insert(name.to_string());
             self.current_gpu_usage += param_bytes;
         }
-        
+
         // Update LRU order (move to end = most recently used)
         self.access_order.retain(|n| n != name);
         self.access_order.push(name.to_string());
@@ -191,9 +200,11 @@ impl PagedAdamWState {
             self.current_gpu_usage = self.current_gpu_usage.saturating_sub(param_bytes);
             self.access_order.retain(|n| n != name);
         }
-        
-        self.exp_avg.insert(name.to_string(), exp_avg.to_device(&Device::Cpu)?);
-        self.exp_avg_sq.insert(name.to_string(), exp_avg_sq.to_device(&Device::Cpu)?);
+
+        self.exp_avg
+            .insert(name.to_string(), exp_avg.to_device(&Device::Cpu)?);
+        self.exp_avg_sq
+            .insert(name.to_string(), exp_avg_sq.to_device(&Device::Cpu)?);
         Ok(())
     }
 
@@ -330,14 +341,16 @@ impl PagedAdamW {
         // Update biased first moment estimate
         let beta1_tensor = Tensor::new(self.beta1 as f32, &device)?;
         let one_minus_beta1 = Tensor::new((1.0 - self.beta1) as f32, &device)?;
-        exp_avg = exp_avg.broadcast_mul(&beta1_tensor)?
+        exp_avg = exp_avg
+            .broadcast_mul(&beta1_tensor)?
             .broadcast_add(&grad.broadcast_mul(&one_minus_beta1)?)?;
 
         // Update biased second moment estimate
         let beta2_tensor = Tensor::new(self.beta2 as f32, &device)?;
         let one_minus_beta2 = Tensor::new((1.0 - self.beta2) as f32, &device)?;
         let grad_sq = grad.sqr()?;
-        exp_avg_sq = exp_avg_sq.broadcast_mul(&beta2_tensor)?
+        exp_avg_sq = exp_avg_sq
+            .broadcast_mul(&beta2_tensor)?
             .broadcast_add(&grad_sq.broadcast_mul(&one_minus_beta2)?)?;
 
         // Bias correction
@@ -351,14 +364,17 @@ impl PagedAdamW {
         let exp_avg_corrected = exp_avg.broadcast_div(&bc1_tensor)?;
         let exp_avg_sq_corrected = exp_avg_sq.broadcast_div(&bc2_tensor)?;
 
-        let denom = exp_avg_sq_corrected.sqrt()?
+        let denom = exp_avg_sq_corrected
+            .sqrt()?
             .broadcast_add(&Tensor::new(self.eps as f32, &device)?)?;
         let step_size = Tensor::new(self.lr as f32, &device)?;
 
         // AdamW: decoupled weight decay
         let update = exp_avg_corrected.broadcast_div(&denom)?;
-        let weight_decay_term = param.broadcast_mul(&Tensor::new(self.weight_decay as f32, &device)?)?;
-        let full_update = update.broadcast_add(&weight_decay_term)?
+        let weight_decay_term =
+            param.broadcast_mul(&Tensor::new(self.weight_decay as f32, &device)?)?;
+        let full_update = update
+            .broadcast_add(&weight_decay_term)?
             .broadcast_mul(&step_size)?;
 
         // Update parameter in place
@@ -373,7 +389,10 @@ impl PagedAdamW {
     /// Get memory usage statistics.
     #[must_use]
     pub fn memory_stats(&self) -> (usize, usize) {
-        let cpu_bytes: usize = self.state.exp_avg.values()
+        let cpu_bytes: usize = self
+            .state
+            .exp_avg
+            .values()
             .chain(self.state.exp_avg_sq.values())
             .map(|t| t.elem_count() * 4)
             .sum();
@@ -489,11 +508,15 @@ impl QLoraTrainer {
             }
 
             // Initialize paged optimizer with actual params from VarMap
-            let params: Vec<(String, Tensor)> = self.varmap.data().lock().unwrap()
+            let params: Vec<(String, Tensor)> = self
+                .varmap
+                .data()
+                .lock()
+                .unwrap()
                 .iter()
                 .map(|(name, var)| (name.clone(), var.as_tensor().clone()))
                 .collect();
-            
+
             paged.init(&params)?;
             self.paged_optimizer = Some(paged);
 
@@ -621,7 +644,7 @@ impl QLoraTrainer {
             if self.accumulation_step >= accum_steps {
                 // Compute gradients first
                 let grads = scaled_loss.backward()?;
-                
+
                 // Step each parameter with the paged optimizer
                 let mut varmap_data = self.varmap.data().lock().unwrap();
                 for (name, var) in varmap_data.iter_mut() {
@@ -694,7 +717,7 @@ impl QLoraTrainer {
         } else if let Some(ref mut paged_optimizer) = self.paged_optimizer {
             // Compute gradients and step with paged optimizer
             let grads = loss.backward()?;
-            
+
             let mut varmap_data = self.varmap.data().lock().unwrap();
             for (name, var) in varmap_data.iter_mut() {
                 if let Some(grad) = grads.get(var.as_tensor()) {

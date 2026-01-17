@@ -520,23 +520,26 @@ mod tests {
     #[test]
     fn test_preset_all_bf16() {
         let config = QLoraConfig::preset_all_bf16(64, 16);
-        
+
         // Check LoRA config
         assert_eq!(config.lora.r, 64);
         assert_eq!(config.lora.alpha, 16);
         assert!((config.lora.dropout - 0.05).abs() < 1e-10);
-        
+
         // Check quantization config
-        assert!(matches!(config.quantization.compute_dtype, ComputeDType::BF16));
+        assert!(matches!(
+            config.quantization.compute_dtype,
+            ComputeDType::BF16
+        ));
         assert!(config.quantization.double_quant);
-        
+
         // Check target modules (should be all linear layers)
         assert!(config.target_modules.contains(&"q_proj".to_string()));
         assert!(config.target_modules.contains(&"k_proj".to_string()));
         assert!(config.target_modules.contains(&"v_proj".to_string()));
         assert!(config.target_modules.contains(&"o_proj".to_string()));
         assert!(config.target_modules.contains(&"gate_proj".to_string()));
-        
+
         // Should not cache weights by default (memory-optimal for training)
         assert!(!config.cache_dequantized);
     }
@@ -544,16 +547,16 @@ mod tests {
     #[test]
     fn test_preset_qv_bf16() {
         let config = QLoraConfig::preset_qv_bf16(32, 8);
-        
+
         // Check LoRA config
         assert_eq!(config.lora.r, 32);
         assert_eq!(config.lora.alpha, 8);
-        
+
         // Check target modules (should only be Q/V)
         assert_eq!(config.target_modules.len(), 2);
         assert!(config.target_modules.contains(&"q_proj".to_string()));
         assert!(config.target_modules.contains(&"v_proj".to_string()));
-        
+
         // Should NOT contain other modules
         assert!(!config.target_modules.contains(&"k_proj".to_string()));
         assert!(!config.target_modules.contains(&"o_proj".to_string()));
@@ -562,27 +565,30 @@ mod tests {
     #[test]
     fn test_preset_inference() {
         let config = QLoraConfig::preset_inference(16, 32);
-        
+
         // Check LoRA config
         assert_eq!(config.lora.r, 16);
         assert_eq!(config.lora.alpha, 32);
-        
+
         // Key difference: should cache weights for inference speed
         assert!(config.cache_dequantized);
-        
+
         // Should still use BF16 compute
-        assert!(matches!(config.quantization.compute_dtype, ComputeDType::BF16));
+        assert!(matches!(
+            config.quantization.compute_dtype,
+            ComputeDType::BF16
+        ));
     }
 
     #[test]
     fn test_is_target() {
         let config = QLoraConfig::preset_all_bf16(8, 16);
-        
+
         // Should match target modules
         assert!(config.is_target("model.layer.q_proj"));
         assert!(config.is_target("transformer.blocks.0.attn.v_proj"));
         assert!(config.is_target("gate_proj"));
-        
+
         // Should NOT match non-target modules
         assert!(!config.is_target("embed_tokens"));
         assert!(!config.is_target("lm_head"));
@@ -593,13 +599,13 @@ mod tests {
     fn test_scale() {
         let config = QLoraConfig::preset_all_bf16(64, 16);
         let scale = config.scale();
-        
+
         // scale = alpha / r = 16 / 64 = 0.25
         assert!((scale - 0.25).abs() < 1e-10);
-        
+
         let config2 = QLoraConfig::preset_all_bf16(8, 32);
         let scale2 = config2.scale();
-        
+
         // scale = alpha / r = 32 / 8 = 4.0
         assert!((scale2 - 4.0).abs() < 1e-10);
     }
@@ -614,7 +620,7 @@ mod tests {
     fn test_validate_for_training_zero_rank() {
         let mut config = QLoraConfig::preset_all_bf16(0, 16);
         config.lora.r = 0;
-        
+
         let result = config.validate_for_training();
         assert!(result.is_err());
         if let Err(e) = result {
@@ -626,7 +632,7 @@ mod tests {
     fn test_validate_for_training_empty_targets() {
         let mut config = QLoraConfig::preset_all_bf16(8, 16);
         config.target_modules.clear();
-        
+
         let result = config.validate_for_training();
         assert!(result.is_err());
         if let Err(e) = result {
@@ -637,17 +643,20 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = QLoraConfig::default();
-        
+
         // Should use BF16 by default for training stability
-        assert!(matches!(config.quantization.compute_dtype, ComputeDType::BF16));
-        
+        assert!(matches!(
+            config.quantization.compute_dtype,
+            ComputeDType::BF16
+        ));
+
         // Should have standard LoRA defaults
         assert_eq!(config.lora.r, 64);
         assert_eq!(config.lora.alpha, 16);
-        
+
         // Should target all linear layers
         assert!(!config.target_modules.is_empty());
-        
+
         // Should not cache by default (memory-optimal)
         assert!(!config.cache_dequantized);
     }
@@ -657,12 +666,12 @@ mod tests {
         let config = QLoraConfig::preset_all_bf16(8, 16);
         let device = Device::Cpu;
         let layer = QuantizedLinear::new(64, 128, &config, &device).unwrap();
-        
+
         let (a_weight, b_weight) = layer.lora_weights();
-        
+
         // A: [r, in_features] = [8, 64]
         assert_eq!(a_weight.dims(), &[8, 64]);
-        
+
         // B: [out_features, r] = [128, 8]
         assert_eq!(b_weight.dims(), &[128, 8]);
     }

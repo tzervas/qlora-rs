@@ -660,7 +660,11 @@ pub fn pad_for_quantization_with_info(
     let device = tensor.device();
 
     let remainder = numel % block_size;
-    let pad_count = if remainder == 0 { 0 } else { block_size - remainder };
+    let pad_count = if remainder == 0 {
+        0
+    } else {
+        block_size - remainder
+    };
 
     if pad_count == 0 {
         let flat = tensor.flatten_all()?;
@@ -728,8 +732,11 @@ pub fn unpad_tensor(tensor: &Tensor, padding_info: &PaddingInfo) -> Result<Tenso
     // Remove padding
     let unpadded: Vec<f32> = flat.into_iter().take(original_numel).collect();
 
-    let unpadded_tensor =
-        Tensor::from_vec(unpadded, padding_info.original_shape.clone(), tensor.device())?;
+    let unpadded_tensor = Tensor::from_vec(
+        unpadded,
+        padding_info.original_shape.clone(),
+        tensor.device(),
+    )?;
     Ok(unpadded_tensor)
 }
 
@@ -1037,7 +1044,8 @@ mod tests {
         let original = Tensor::randn(0.0f32, 1.0, (64,), &device).unwrap();
 
         let quantized = quantize_nf4(&original, 64).unwrap();
-        let restored_f16 = dequantize_nf4_with_dtype(&quantized, &device, ComputeDType::F16).unwrap();
+        let restored_f16 =
+            dequantize_nf4_with_dtype(&quantized, &device, ComputeDType::F16).unwrap();
 
         assert_eq!(restored_f16.dtype(), DType::F16);
         assert_eq!(restored_f16.shape().dims(), &[64]);
@@ -1049,7 +1057,8 @@ mod tests {
         let original = Tensor::randn(0.0f32, 1.0, (64,), &device).unwrap();
 
         let quantized = quantize_nf4(&original, 64).unwrap();
-        let restored_bf16 = dequantize_nf4_with_dtype(&quantized, &device, ComputeDType::BF16).unwrap();
+        let restored_bf16 =
+            dequantize_nf4_with_dtype(&quantized, &device, ComputeDType::BF16).unwrap();
 
         assert_eq!(restored_bf16.dtype(), DType::BF16);
         assert_eq!(restored_bf16.shape().dims(), &[64]);
@@ -1061,7 +1070,8 @@ mod tests {
         let original = Tensor::randn(0.0f32, 1.0, (64,), &device).unwrap();
 
         let quantized = quantize_nf4(&original, 64).unwrap();
-        let restored_f32 = dequantize_nf4_with_dtype(&quantized, &device, ComputeDType::F32).unwrap();
+        let restored_f32 =
+            dequantize_nf4_with_dtype(&quantized, &device, ComputeDType::F32).unwrap();
 
         assert_eq!(restored_f32.dtype(), DType::F32);
         assert_eq!(restored_f32.shape().dims(), &[64]);
@@ -1194,7 +1204,10 @@ mod tests {
 
         // Verify VALUES are preserved through the entire pad/unpad cycle
         let restored_data: Vec<f32> = restored.flatten_all().unwrap().to_vec1().unwrap();
-        assert_eq!(restored_data, original_data, "Values should be preserved through pad/unpad cycle");
+        assert_eq!(
+            restored_data, original_data,
+            "Values should be preserved through pad/unpad cycle"
+        );
     }
 
     #[test]
@@ -1206,7 +1219,10 @@ mod tests {
         let result = pad_for_quantization(&f16_tensor, 64, 0.0);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("F32"), "Error should mention F32 requirement: {err_msg}");
+        assert!(
+            err_msg.contains("F32"),
+            "Error should mention F32 requirement: {err_msg}"
+        );
 
         let result = pad_for_quantization_with_info(&f16_tensor, 64, 0.0);
         assert!(result.is_err());
