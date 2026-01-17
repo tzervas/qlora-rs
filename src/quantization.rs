@@ -556,7 +556,7 @@ pub fn dequantize_nf4_with_dtype(
 /// `pad_for_quantization_with_info`.
 ///
 /// # Arguments
-/// * `tensor` - Input tensor to pad
+/// * `tensor` - Input tensor to pad (must be F32 dtype)
 /// * `block_size` - Target block size for quantization
 /// * `pad_value` - Value to use for padding (typically 0.0)
 ///
@@ -565,6 +565,10 @@ pub fn dequantize_nf4_with_dtype(
 ///
 /// # Errors
 /// Returns an error if the tensor cannot be processed
+///
+/// # Note
+/// This function only works with F32 tensors. Ensure your tensor is in F32 format
+/// before calling this function.
 pub fn pad_for_quantization(tensor: &Tensor, block_size: usize, pad_value: f32) -> Result<Tensor> {
     let numel = tensor.elem_count();
     let device = tensor.device();
@@ -610,7 +614,7 @@ pub struct PaddingInfo {
 /// The tensor is flattened and padded to be divisible by block_size.
 ///
 /// # Arguments
-/// * `tensor` - Input tensor to pad
+/// * `tensor` - Input tensor to pad (must be F32 dtype)
 /// * `block_size` - Target block size for quantization
 /// * `pad_value` - Value to use for padding (typically 0.0)
 ///
@@ -619,6 +623,12 @@ pub struct PaddingInfo {
 ///
 /// # Errors
 /// Returns an error if the tensor cannot be processed
+///
+/// # Note
+/// This function only works with F32 tensors. Ensure your tensor is in F32 format
+/// before calling this function. For mixed precision workflows, pad before quantizing,
+/// then dequantize to your target dtype (F16/BF16), and convert back to F32 before
+/// unpadding.
 pub fn pad_for_quantization_with_info(
     tensor: &Tensor,
     block_size: usize,
@@ -662,7 +672,7 @@ pub fn pad_for_quantization_with_info(
 /// Remove padding from a dequantized tensor using stored padding information.
 ///
 /// # Arguments
-/// * `tensor` - Padded tensor to unpad
+/// * `tensor` - Padded tensor to unpad (must be F32 dtype)
 /// * `padding_info` - Padding information from `pad_for_quantization_with_info`
 ///
 /// # Returns
@@ -670,9 +680,14 @@ pub fn pad_for_quantization_with_info(
 ///
 /// # Errors
 /// Returns an error if unpadding fails
+///
+/// # Note
+/// This function only works with F32 tensors. For mixed precision workflows,
+/// convert the tensor to F32 before unpadding.
 pub fn unpad_tensor(tensor: &Tensor, padding_info: &PaddingInfo) -> Result<Tensor> {
     if padding_info.pad_count == 0 {
-        return Ok(tensor.clone());
+        let reshaped = tensor.reshape(padding_info.original_shape.clone())?;
+        return Ok(reshaped);
     }
 
     let flat = tensor.flatten_all()?.to_vec1::<f32>()?;
@@ -1106,5 +1121,25 @@ mod tests {
         assert_eq!(&padded_vec[..5], &original_data[..]);
         // Remaining should be padding
         assert_eq!(&padded_vec[5..], &[0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_padding_2d_tensor_no_padding_needed() {
+        let device = Device::Cpu;
+        // Create a 2D tensor that doesn't need padding
+        // 8x8 = 64 elements, exactly divisible by 64
+        let original = Tensor::randn(0.0f32, 1.0, (8, 8), &device).unwrap();
+
+        let (padded, info) = pad_for_quantization_with_info(&original, 64, 0.0).unwrap();
+
+        // No padding needed
+        assert_eq!(info.pad_count, 0);
+        assert_eq!(info.original_shape, vec![8, 8]);
+        assert_eq!(info.padded_shape, vec![64]);
+        assert_eq!(padded.elem_count(), 64);
+
+        // Test roundtrip: unpad should restore original shape
+        let restored = unpad_tensor(&padded, &info).unwrap();
+        assert_eq!(restored.shape().dims(), &[8, 8]);
     }
 }
