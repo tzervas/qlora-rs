@@ -1,6 +1,6 @@
 [package]
 name = "qlora-rs"
-version = "0.1.1"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.92"
 license = "MIT"
@@ -29,8 +29,8 @@ thiserror = "2.0"
 tracing = "0.1"
 anyhow = "1.0"
 
-# peft-rs dependency - use git repository for CI and workspace development
-peft-rs = { git = "https://github.com/tzervas/peft-rs", branch = "dev" }
+# peft-rs dependency - published version includes required weights() methods
+peft-rs = "0.4.1"
 
 # GGUF support (for future: gguf = "0.1")
 byteorder = "1.5"

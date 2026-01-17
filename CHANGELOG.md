@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-01-17
+
+### Added
+- Complete training infrastructure with `QLoraTrainer` and `QLoraTrainingConfig` modules (769 lines)
+- `PagedAdamW` optimizer with memory-efficient GPU/CPU paging for large model training
+- `PagedAdamWState` with LRU-based GPU memory management and automatic state eviction
+- Full gradient accumulation support with configurable accumulation steps
+- Learning rate scheduling with linear warmup and cosine annealing presets
+- Comprehensive training configuration system with 10+ parameters and preset builders
+- Integration test suite with 7 comprehensive training validation tests
+- `from_weight_with_varbuilder()` method for training-aware layer initialization
+- Accessor methods `lora_weights()` and `lora_shapes()` for parameter inspection
+- Training support for both on-the-fly and cached dequantization modes
+
+### Changed
+- Updated peft-rs dependency to use dev branch (includes custom weights() methods)
+- Upgraded thiserror from 1.0 to 2.0 for improved error handling
+- Upgraded criterion from 0.5 to 0.8 for enhanced benchmark infrastructure
+- Modernized GitHub Actions: checkout@v4 → v6, rust-cache to v2.8.2 latest
+- Replaced deprecated rustsec/audit-check-action with manual cargo-audit
+- Improved merge conflict resolution from PR #10 code review
+
+### Fixed
+- Removed broken submodule entries (gemm-fork, paste-fork) from git tracking
+- Fixed duplicate method definitions from merge conflict resolution
+- Resolved 5 critical CI/CD failures (formatting, clippy, tests, benchmarks, security audit)
+- Updated security audit handling for RUSTSEC-2024-0436 compatibility
+
+### Test Coverage
+- Expanded to 57 total tests: 50 unit tests + 7 integration tests (100% pass rate)
+- Added comprehensive training integration tests covering:
+  - Standard optimizer weight training
+  - Paged optimizer memory tracking and limits
+  - Optimizer state management and LRU eviction
+  - Full training loop with gradient accumulation
+  - VarBuilder requirement validation
+
 ## [0.1.1] - 2026-01-10
 
 ### Added
