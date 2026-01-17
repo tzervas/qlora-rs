@@ -3,9 +3,16 @@
 //! NF4 quantization uses 16 levels optimized for normally-distributed weights,
 //! providing better accuracy than uniform 4-bit quantization.
 //!
+//! Features:
+//! - Per-tensor and per-channel quantization strategies
+//! - Zero-point (asymmetric) quantization for non-centered distributions
+//! - Double quantization for additional memory savings
+//! - Mixed precision dequantization (F32, F16, BF16)
+//! - Quantization-aware padding for block alignment
+//!
 //! Reference: <https://arxiv.org/abs/2305.14314> (`QLoRA` paper)
 
-use candle_core::{Device, Tensor};
+use candle_core::{DType, Device, Tensor};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{QLoraError, Result};
@@ -200,7 +207,7 @@ fn quantize_per_tensor(tensor: &Tensor, config: &QuantizationConfig) -> Result<Q
 
     let num_blocks = numel / config.block_size;
     let mut scales = Vec::with_capacity(num_blocks);
-    let mut quantized = Vec::with_capacity((numel + 1) / 2);
+    let mut quantized = Vec::with_capacity(numel.div_ceil(2));
 
     for block_idx in 0..num_blocks {
         let start = block_idx * config.block_size;
@@ -273,7 +280,7 @@ fn quantize_per_channel(tensor: &Tensor, config: &QuantizationConfig) -> Result<
     let flat = tensor.flatten_all()?.to_vec1::<f32>()?;
 
     let mut scales = Vec::with_capacity(num_channels);
-    let mut quantized = Vec::with_capacity((flat.len() + 1) / 2);
+    let mut quantized = Vec::with_capacity(flat.len().div_ceil(2));
 
     // Quantize each channel separately
     for ch_idx in 0..num_channels {
@@ -506,6 +513,233 @@ pub fn dequantize_nf4(quantized: &QuantizedTensor, device: &Device) -> Result<Te
     Ok(tensor)
 }
 
+/// Dequantize an NF4 tensor to a specific data type for mixed precision computation.
+///
+/// This function dequantizes the tensor and converts it to the specified compute
+/// data type (F16, BF16, or F32) for efficient mixed precision training.
+///
+/// # Arguments
+/// * `quantized` - Quantized tensor to dequantize
+/// * `device` - Device to create the output tensor on
+/// * `compute_dtype` - Target data type for the output tensor
+///
+/// # Returns
+/// Dequantized tensor in the specified data type
+///
+/// # Errors
+/// Returns an error if the tensor cannot be created or dtype conversion fails
+pub fn dequantize_nf4_with_dtype(
+    quantized: &QuantizedTensor,
+    device: &Device,
+    compute_dtype: ComputeDType,
+) -> Result<Tensor> {
+    // First dequantize to f32
+    let f32_tensor = dequantize_nf4(quantized, device)?;
+
+    // Convert to target dtype
+    let dtype = match compute_dtype {
+        ComputeDType::F32 => return Ok(f32_tensor),
+        ComputeDType::F16 => DType::F16,
+        ComputeDType::BF16 => DType::BF16,
+    };
+
+    let converted = f32_tensor.to_dtype(dtype)?;
+    Ok(converted)
+}
+
+/// Pad a tensor to ensure its size is divisible by the block size.
+///
+/// This is useful for quantization-aware model preparation, ensuring that
+/// all weight tensors can be cleanly divided into quantization blocks.
+/// The tensor is flattened, padded, and the padded flat tensor is returned.
+/// The original shape is preserved in the returned tensor's metadata via
+/// `pad_for_quantization_with_info`.
+///
+/// # Arguments
+/// * `tensor` - Input tensor to pad (must be F32 dtype)
+/// * `block_size` - Target block size for quantization
+/// * `pad_value` - Value to use for padding (typically 0.0)
+///
+/// # Returns
+/// 1D padded tensor with size divisible by `block_size`
+///
+/// # Errors
+/// Returns an error if the tensor cannot be processed
+///
+/// # Note
+/// This function only works with F32 tensors. Ensure your tensor is in F32 format
+/// before calling this function.
+///
+/// # Errors
+/// Returns an error if the tensor is not F32 dtype.
+pub fn pad_for_quantization(tensor: &Tensor, block_size: usize, pad_value: f32) -> Result<Tensor> {
+    // Validate dtype - only F32 is supported
+    if tensor.dtype() != candle_core::DType::F32 {
+        return Err(QLoraError::InvalidConfig(format!(
+            "pad_for_quantization only supports F32 tensors, got {:?}. \
+             Convert to F32 first with tensor.to_dtype(DType::F32)",
+            tensor.dtype()
+        )));
+    }
+
+    let numel = tensor.elem_count();
+    let device = tensor.device();
+
+    // Check if padding is needed
+    let remainder = numel % block_size;
+    if remainder == 0 {
+        // Flatten and return
+        let flat = tensor.flatten_all()?;
+        return Ok(flat);
+    }
+
+    // Calculate padding needed
+    let pad_count = block_size - remainder;
+    let flat = tensor.flatten_all()?.to_vec1::<f32>()?;
+
+    // Create padded vector
+    let mut padded = flat;
+    padded.extend(std::iter::repeat_n(pad_value, pad_count));
+
+    // Return as 1D tensor
+    let padded_tensor = Tensor::from_vec(padded, (numel + pad_count,), device)?;
+    Ok(padded_tensor)
+}
+
+/// Information about padding applied for quantization.
+#[derive(Debug, Clone)]
+pub struct PaddingInfo {
+    /// Original shape before padding
+    pub original_shape: Vec<usize>,
+    /// Padded shape
+    pub padded_shape: Vec<usize>,
+    /// Number of elements added as padding
+    pub pad_count: usize,
+    /// Block size used for padding calculation
+    pub block_size: usize,
+}
+
+/// Pad a tensor and return information for later unpadding.
+///
+/// This function pads the tensor for quantization and returns padding metadata
+/// that can be used to remove the padding after dequantization.
+/// The tensor is flattened and padded to be divisible by `block_size`.
+///
+/// # Arguments
+/// * `tensor` - Input tensor to pad (must be F32 dtype)
+/// * `block_size` - Target block size for quantization
+/// * `pad_value` - Value to use for padding (typically 0.0)
+///
+/// # Returns
+/// Tuple of (1D padded tensor, `PaddingInfo` with original shape)
+///
+/// # Errors
+/// Returns an error if the tensor cannot be processed
+///
+/// # Note
+/// This function only works with F32 tensors. Ensure your tensor is in F32 format
+/// before calling this function. For mixed precision workflows, pad before quantizing,
+/// then dequantize to your target dtype (F16/BF16), and convert back to F32 before
+/// unpadding.
+pub fn pad_for_quantization_with_info(
+    tensor: &Tensor,
+    block_size: usize,
+    pad_value: f32,
+) -> Result<(Tensor, PaddingInfo)> {
+    // Validate dtype - only F32 is supported
+    if tensor.dtype() != candle_core::DType::F32 {
+        return Err(QLoraError::InvalidConfig(format!(
+            "pad_for_quantization_with_info only supports F32 tensors, got {:?}. \
+             Convert to F32 first with tensor.to_dtype(DType::F32)",
+            tensor.dtype()
+        )));
+    }
+
+    let original_shape = tensor.shape().dims().to_vec();
+    let numel = tensor.elem_count();
+    let device = tensor.device();
+
+    let remainder = numel % block_size;
+    let pad_count = if remainder == 0 {
+        0
+    } else {
+        block_size - remainder
+    };
+
+    if pad_count == 0 {
+        let flat = tensor.flatten_all()?;
+        let info = PaddingInfo {
+            original_shape: original_shape.clone(),
+            padded_shape: vec![numel],
+            pad_count: 0,
+            block_size,
+        };
+        return Ok((flat, info));
+    }
+
+    let flat = tensor.flatten_all()?.to_vec1::<f32>()?;
+    let mut padded = flat;
+    padded.extend(std::iter::repeat_n(pad_value, pad_count));
+
+    let padded_len = numel + pad_count;
+    let padded_tensor = Tensor::from_vec(padded, (padded_len,), device)?;
+
+    let info = PaddingInfo {
+        original_shape,
+        padded_shape: vec![padded_len],
+        pad_count,
+        block_size,
+    };
+
+    Ok((padded_tensor, info))
+}
+
+/// Remove padding from a dequantized tensor using stored padding information.
+///
+/// # Arguments
+/// * `tensor` - Padded tensor to unpad (must be F32 dtype)
+/// * `padding_info` - Padding information from `pad_for_quantization_with_info`
+///
+/// # Returns
+/// Tensor with original shape (padding removed)
+///
+/// # Errors
+/// Returns an error if unpadding fails
+///
+/// # Note
+/// This function only works with F32 tensors. For mixed precision workflows,
+/// convert the tensor to F32 before unpadding.
+pub fn unpad_tensor(tensor: &Tensor, padding_info: &PaddingInfo) -> Result<Tensor> {
+    // Validate dtype - only F32 is supported
+    if tensor.dtype() != candle_core::DType::F32 {
+        return Err(QLoraError::InvalidConfig(format!(
+            "unpad_tensor only supports F32 tensors, got {:?}. \
+             Convert to F32 first with tensor.to_dtype(DType::F32)",
+            tensor.dtype()
+        )));
+    }
+
+    if padding_info.pad_count == 0 {
+        // Flatten first to ensure consistent behavior regardless of input shape
+        let flat = tensor.flatten_all()?;
+        let reshaped = flat.reshape(padding_info.original_shape.clone())?;
+        return Ok(reshaped);
+    }
+
+    let flat = tensor.flatten_all()?.to_vec1::<f32>()?;
+    let original_numel: usize = padding_info.original_shape.iter().product();
+
+    // Remove padding
+    let unpadded: Vec<f32> = flat.into_iter().take(original_numel).collect();
+
+    let unpadded_tensor = Tensor::from_vec(
+        unpadded,
+        padding_info.original_shape.clone(),
+        tensor.device(),
+    )?;
+    Ok(unpadded_tensor)
+}
+
 /// Quantize a single value to NF4 (returns 4-bit code).
 fn quantize_value_nf4(value: f32) -> u8 {
     // Find closest NF4 level
@@ -570,14 +804,15 @@ mod tests {
     fn test_memory_reduction() {
         let device = Device::Cpu;
         let original = Tensor::zeros(&[1024, 1024], DType::F32, &device).unwrap();
-        let original_bytes = 1024 * 1024 * 4; // f32 = 4 bytes
+        let original_bytes: i32 = 1024 * 1024 * 4; // f32 = 4 bytes
 
         let quantized = quantize_nf4(&original, 64).unwrap();
         let quantized_bytes = quantized.size_bytes();
 
         // Should be roughly 4x reduction (4-bit vs 32-bit) plus some overhead for scales
-        let ratio = original_bytes as f64 / quantized_bytes as f64;
-        assert!(ratio > 3.0, "Expected >3x reduction, got {:.2}x", ratio);
+        #[allow(clippy::cast_precision_loss)]
+        let ratio = f64::from(original_bytes) / quantized_bytes as f64;
+        assert!(ratio > 3.0, "Expected >3x reduction, got {ratio:.2}x");
     }
 
     #[test]
@@ -602,7 +837,7 @@ mod tests {
 
         // Double quantized should use less memory than non-double quantized
         let non_dq_size = quantized.scales.len() * 4; // Original scales
-        let dq_scales_size = quantized.scales_quantized.as_ref().map_or(0, |sq| sq.len())
+        let dq_scales_size = quantized.scales_quantized.as_ref().map_or(0, Vec::len)
             + quantized
                 .scales_scales
                 .as_ref()
@@ -801,5 +1036,206 @@ mod tests {
         // Verify roundtrip
         let restored = dequantize_nf4(&quantized, &device).unwrap();
         assert_eq!(restored.shape().dims(), &[8, 64]);
+    }
+
+    #[test]
+    fn test_mixed_precision_f16() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (64,), &device).unwrap();
+
+        let quantized = quantize_nf4(&original, 64).unwrap();
+        let restored_f16 =
+            dequantize_nf4_with_dtype(&quantized, &device, ComputeDType::F16).unwrap();
+
+        assert_eq!(restored_f16.dtype(), DType::F16);
+        assert_eq!(restored_f16.shape().dims(), &[64]);
+    }
+
+    #[test]
+    fn test_mixed_precision_bf16() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (64,), &device).unwrap();
+
+        let quantized = quantize_nf4(&original, 64).unwrap();
+        let restored_bf16 =
+            dequantize_nf4_with_dtype(&quantized, &device, ComputeDType::BF16).unwrap();
+
+        assert_eq!(restored_bf16.dtype(), DType::BF16);
+        assert_eq!(restored_bf16.shape().dims(), &[64]);
+    }
+
+    #[test]
+    fn test_mixed_precision_f32_passthrough() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (64,), &device).unwrap();
+
+        let quantized = quantize_nf4(&original, 64).unwrap();
+        let restored_f32 =
+            dequantize_nf4_with_dtype(&quantized, &device, ComputeDType::F32).unwrap();
+
+        assert_eq!(restored_f32.dtype(), DType::F32);
+        assert_eq!(restored_f32.shape().dims(), &[64]);
+    }
+
+    #[test]
+    fn test_padding_for_quantization_needed() {
+        let device = Device::Cpu;
+        // 100 elements, block size 64 -> needs padding to 128
+        let original = Tensor::randn(0.0f32, 1.0, (100,), &device).unwrap();
+
+        let padded = pad_for_quantization(&original, 64, 0.0).unwrap();
+        let padded_numel = padded.elem_count();
+
+        // Should be padded to 128 (next multiple of 64)
+        assert_eq!(padded_numel % 64, 0);
+        assert_eq!(padded_numel, 128);
+        // Result is always 1D
+        assert_eq!(padded.shape().dims().len(), 1);
+    }
+
+    #[test]
+    fn test_padding_for_quantization_not_needed() {
+        let device = Device::Cpu;
+        // 128 elements already divisible by 64
+        let original = Tensor::randn(0.0f32, 1.0, (128,), &device).unwrap();
+
+        let padded = pad_for_quantization(&original, 64, 0.0).unwrap();
+
+        // Should remain the same count
+        assert_eq!(padded.elem_count(), 128);
+        // Result is always 1D (flattened)
+        assert_eq!(padded.shape().dims().len(), 1);
+    }
+
+    #[test]
+    fn test_padding_with_info_roundtrip() {
+        let device = Device::Cpu;
+        let original = Tensor::randn(0.0f32, 1.0, (100,), &device).unwrap();
+
+        // Pad
+        let (padded, info) = pad_for_quantization_with_info(&original, 64, 0.0).unwrap();
+        assert_eq!(info.pad_count, 28); // 128 - 100
+        assert_eq!(info.original_shape, vec![100]);
+        assert_eq!(info.padded_shape, vec![128]); // 1D padded
+
+        // Quantize the padded tensor
+        let quantized = quantize_nf4(&padded, 64).unwrap();
+
+        // Dequantize
+        let restored_padded = dequantize_nf4(&quantized, &device).unwrap();
+
+        // Unpad
+        let restored = unpad_tensor(&restored_padded, &info).unwrap();
+        assert_eq!(restored.shape().dims(), &[100]);
+    }
+
+    #[test]
+    fn test_padding_2d_tensor() {
+        let device = Device::Cpu;
+        // Create a 2D tensor that needs padding
+        // 4x10 = 40 elements, needs padding to 64
+        let original = Tensor::randn(0.0f32, 1.0, (4, 10), &device).unwrap();
+
+        let (padded, info) = pad_for_quantization_with_info(&original, 64, 0.0).unwrap();
+
+        assert_eq!(info.pad_count, 24); // 64 - 40 = 24
+        assert_eq!(info.original_shape, vec![4, 10]);
+        // Padded shape is 1D
+        assert_eq!(info.padded_shape, vec![64]);
+
+        // Total elements should be 64
+        assert_eq!(padded.elem_count(), 64);
+
+        // Verify padding actually happened
+        let padded_flat: Vec<f32> = padded.to_vec1().unwrap();
+        assert_eq!(padded_flat.len(), 64);
+    }
+
+    #[test]
+    fn test_padding_preserves_values() {
+        let device = Device::Cpu;
+        let original_data = vec![1.0f32, 2.0, 3.0, 4.0, 5.0];
+        let original = Tensor::from_vec(original_data.clone(), (5,), &device).unwrap();
+
+        let padded = pad_for_quantization(&original, 8, 0.0).unwrap();
+        let padded_vec: Vec<f32> = padded.to_vec1().unwrap();
+
+        // First 5 values should be preserved
+        assert_eq!(&padded_vec[..5], &original_data[..]);
+        // Remaining should be padding
+        assert_eq!(&padded_vec[5..], &[0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_padding_2d_tensor_no_padding_needed() {
+        let device = Device::Cpu;
+        // Create a 2D tensor that doesn't need padding
+        // 8x8 = 64 elements, exactly divisible by 64
+        let original = Tensor::randn(0.0f32, 1.0, (8, 8), &device).unwrap();
+
+        let (padded, info) = pad_for_quantization_with_info(&original, 64, 0.0).unwrap();
+
+        // No padding needed
+        assert_eq!(info.pad_count, 0);
+        assert_eq!(info.original_shape, vec![8, 8]);
+        assert_eq!(info.padded_shape, vec![64]);
+        assert_eq!(padded.elem_count(), 64);
+
+        // Test roundtrip: unpad should restore original shape
+        let restored = unpad_tensor(&padded, &info).unwrap();
+        assert_eq!(restored.shape().dims(), &[8, 8]);
+    }
+
+    #[test]
+    fn test_padding_2d_no_padding_roundtrip() {
+        let device = Device::Cpu;
+        // 8x8 = 64 elements, exactly divisible by 64 (no padding needed)
+        #[allow(clippy::cast_precision_loss)]
+        let original_data: Vec<f32> = (0..64).map(|i| i as f32).collect();
+        let original = Tensor::from_vec(original_data.clone(), (8, 8), &device).unwrap();
+
+        let (padded, info) = pad_for_quantization_with_info(&original, 64, 0.0).unwrap();
+        assert_eq!(info.pad_count, 0);
+
+        let restored = unpad_tensor(&padded, &info).unwrap();
+
+        // Verify shape is restored
+        assert_eq!(restored.shape().dims(), &[8, 8]);
+
+        // Verify VALUES are preserved through the entire pad/unpad cycle
+        let restored_data: Vec<f32> = restored.flatten_all().unwrap().to_vec1().unwrap();
+        assert_eq!(
+            restored_data, original_data,
+            "Values should be preserved through pad/unpad cycle"
+        );
+    }
+
+    #[test]
+    fn test_padding_dtype_validation() {
+        let device = Device::Cpu;
+        // Create an F16 tensor - should fail with clear error
+        let f16_tensor = Tensor::ones((64,), DType::F16, &device).unwrap();
+
+        let result = pad_for_quantization(&f16_tensor, 64, 0.0);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("F32"),
+            "Error should mention F32 requirement: {err_msg}"
+        );
+
+        let result = pad_for_quantization_with_info(&f16_tensor, 64, 0.0);
+        assert!(result.is_err());
+
+        // unpad_tensor dtype validation
+        let f16_tensor = Tensor::ones((64,), DType::F16, &device).unwrap();
+        let dummy_info = PaddingInfo {
+            original_shape: vec![8, 8],
+            padded_shape: vec![64],
+            pad_count: 0,
+            block_size: 64,
+        };
+        let result = unpad_tensor(&f16_tensor, &dummy_info);
+        assert!(result.is_err());
     }
 }
