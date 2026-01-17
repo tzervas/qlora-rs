@@ -569,7 +569,19 @@ pub fn dequantize_nf4_with_dtype(
 /// # Note
 /// This function only works with F32 tensors. Ensure your tensor is in F32 format
 /// before calling this function.
+///
+/// # Errors
+/// Returns an error if the tensor is not F32 dtype.
 pub fn pad_for_quantization(tensor: &Tensor, block_size: usize, pad_value: f32) -> Result<Tensor> {
+    // Validate dtype - only F32 is supported
+    if tensor.dtype() != candle_core::DType::F32 {
+        return Err(QLoraError::InvalidConfig(format!(
+            "pad_for_quantization only supports F32 tensors, got {:?}. \
+             Convert to F32 first with tensor.to_dtype(DType::F32)",
+            tensor.dtype()
+        )));
+    }
+
     let numel = tensor.elem_count();
     let device = tensor.device();
 
@@ -634,6 +646,15 @@ pub fn pad_for_quantization_with_info(
     block_size: usize,
     pad_value: f32,
 ) -> Result<(Tensor, PaddingInfo)> {
+    // Validate dtype - only F32 is supported
+    if tensor.dtype() != candle_core::DType::F32 {
+        return Err(QLoraError::InvalidConfig(format!(
+            "pad_for_quantization_with_info only supports F32 tensors, got {:?}. \
+             Convert to F32 first with tensor.to_dtype(DType::F32)",
+            tensor.dtype()
+        )));
+    }
+
     let original_shape = tensor.shape().dims().to_vec();
     let numel = tensor.elem_count();
     let device = tensor.device();
@@ -685,8 +706,19 @@ pub fn pad_for_quantization_with_info(
 /// This function only works with F32 tensors. For mixed precision workflows,
 /// convert the tensor to F32 before unpadding.
 pub fn unpad_tensor(tensor: &Tensor, padding_info: &PaddingInfo) -> Result<Tensor> {
+    // Validate dtype - only F32 is supported
+    if tensor.dtype() != candle_core::DType::F32 {
+        return Err(QLoraError::InvalidConfig(format!(
+            "unpad_tensor only supports F32 tensors, got {:?}. \
+             Convert to F32 first with tensor.to_dtype(DType::F32)",
+            tensor.dtype()
+        )));
+    }
+
     if padding_info.pad_count == 0 {
-        let reshaped = tensor.reshape(padding_info.original_shape.clone())?;
+        // Flatten first to ensure consistent behavior regardless of input shape
+        let flat = tensor.flatten_all()?;
+        let reshaped = flat.reshape(padding_info.original_shape.clone())?;
         return Ok(reshaped);
     }
 
@@ -1141,5 +1173,51 @@ mod tests {
         // Test roundtrip: unpad should restore original shape
         let restored = unpad_tensor(&padded, &info).unwrap();
         assert_eq!(restored.shape().dims(), &[8, 8]);
+    }
+
+    #[test]
+    fn test_padding_2d_no_padding_roundtrip() {
+        let device = Device::Cpu;
+        // 8x8 = 64 elements, exactly divisible by 64 (no padding needed)
+        let original_data: Vec<f32> = (0..64).map(|i| i as f32).collect();
+        let original = Tensor::from_vec(original_data.clone(), (8, 8), &device).unwrap();
+
+        let (padded, info) = pad_for_quantization_with_info(&original, 64, 0.0).unwrap();
+        assert_eq!(info.pad_count, 0);
+
+        let restored = unpad_tensor(&padded, &info).unwrap();
+
+        // Verify shape is restored
+        assert_eq!(restored.shape().dims(), &[8, 8]);
+
+        // Verify VALUES are preserved through the entire pad/unpad cycle
+        let restored_data: Vec<f32> = restored.flatten_all().unwrap().to_vec1().unwrap();
+        assert_eq!(restored_data, original_data, "Values should be preserved through pad/unpad cycle");
+    }
+
+    #[test]
+    fn test_padding_dtype_validation() {
+        let device = Device::Cpu;
+        // Create an F16 tensor - should fail with clear error
+        let f16_tensor = Tensor::ones((64,), DType::F16, &device).unwrap();
+
+        let result = pad_for_quantization(&f16_tensor, 64, 0.0);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("F32"), "Error should mention F32 requirement: {}", err_msg);
+
+        let result = pad_for_quantization_with_info(&f16_tensor, 64, 0.0);
+        assert!(result.is_err());
+
+        // unpad_tensor dtype validation
+        let f16_tensor = Tensor::ones((64,), DType::F16, &device).unwrap();
+        let dummy_info = PaddingInfo {
+            original_shape: vec![8, 8],
+            padded_shape: vec![64],
+            pad_count: 0,
+            block_size: 64,
+        };
+        let result = unpad_tensor(&f16_tensor, &dummy_info);
+        assert!(result.is_err());
     }
 }
