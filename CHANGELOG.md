@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Bumped to stable 1.0.0 release
-- All tests passing (57 unit + integration tests)
+- All tests passing (59 tests: 52 unit + 7 integration)
 - Full clippy compliance
 
 ### Fixed
