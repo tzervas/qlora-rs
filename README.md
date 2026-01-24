@@ -16,7 +16,7 @@
 - **QLoRA Inference Layer** - Forward pass with frozen quantized weights + LoRA adapters
 - **Dual Export Formats** - GGUF (llama.cpp compatible) and Candle native (QNAT) formats
 
-**Status**: Alpha - Active Development. Core quantization and inference are functional. Training support planned for Phase 2.
+**Status**: 1.0.0 Release - Core quantization, QLoRA inference, training support, and dual export formats are fully functional.
 
 ## Features
 
@@ -25,13 +25,13 @@
 - ⚡ Fast quantization and dequantization
 - 📦 Dual export: GGUF format (llama.cpp) and Candle native (QNAT)
 - 🔗 Integrates with [peft-rs](https://crates.io/crates/peft-rs) for LoRA adapter management
-- ✅ 24/24 tests passing (100% coverage)
+- ✅ 59/59 tests passing
 
 ## Installation
 
 ```toml
 [dependencies]
-qlora-rs = "0.1"
+qlora-rs = "1.0"
 ```
 
 ## Quick Start

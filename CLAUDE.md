@@ -52,7 +52,7 @@ pub struct QLoraLayer {
 
 ## Dependency on peft-rs
 
-This crate requires peft-rs v0.4.1+ for:
+This crate requires peft-rs v1.0+ for:
 - `Adapter` trait implementation
 - `weights()` method for accessing trainable parameters
 - `LoraConfig` for configuration
@@ -127,13 +127,13 @@ Must produce llama.cpp compatible files for inference deployment.
 - [ ] Training loop with gradient checkpointing
 - [ ] Memory profiling and optimization
 - [ ] Benchmark against bitsandbytes
-- [ ] Examples directory
+- [x] Examples directory
 - [ ] 100% doc coverage
 
 ## Common Issues
 
 ### "peft-rs version mismatch"
-Ensure Cargo.toml specifies `peft-rs = "0.4.1"` or compatible.
+Ensure Cargo.toml specifies `peft-rs = "1.0"` or compatible.
 
 ### Quantization produces NaN
 Check for zero/negative values in scales. Add epsilon to denominators.
