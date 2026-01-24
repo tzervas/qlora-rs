@@ -30,7 +30,7 @@ tracing = "0.1"
 anyhow = "1.0"
 
 # peft-rs dependency - published version includes required weights() methods
-peft-rs = "0.4.1"
+peft-rs = "1.0"
 
 # GGUF support (for future: gguf = "0.1")
 byteorder = "1.5"
