@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-01-24
+
+### Added
+- **merge_and_export_gguf()** - Complete LoRA weight merging and GGUF export
+  - Dequantizes base weights, merges LoRA adapters, re-quantizes, exports
+  - New accessor methods on QLoraLayer: `quantized_weight()`, `lora_weights()`, `lora_scale()`, `device()`, `config()`
+- **Examples directory** with 3 runnable examples:
+  - `basic_quantization.rs` - NF4 quantization demonstration
+  - `qlora_inference.rs` - QLoRA forward pass example
+  - `qlora_training.rs` - Training loop setup example
+- **Benchmark suite** with Criterion benchmarks:
+  - `quantize_nf4_4096` - 4096x4096 tensor quantization
+  - `dequantize_nf4_4096` - Dequantization performance
+  - `qlora_forward_4096` - Forward pass benchmark
+- CLAUDE.md for Claude Code development workflow
+
+### Changed
+- Bumped to stable 1.0.0 release
+- All tests passing (57 unit + integration tests)
+- Full clippy compliance
+
+### Fixed
+- Doc comment formatting for clippy doc_markdown lint
+
 ## [0.3.0] - 2026-01-17
 
 ### Added

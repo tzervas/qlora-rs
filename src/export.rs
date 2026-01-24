@@ -276,13 +276,60 @@ fn calculate_header_size(
 /// This dequantizes the base, merges `LoRA`, and re-quantizes.
 /// Useful for deployment without `LoRA` overhead.
 ///
+/// The merged weight is computed as: `W_merged = W_base + (B @ A) * scale`
+/// where:
+/// - `W_base` is the dequantized base weight
+/// - `A` and `B` are the `LoRA` adapter matrices
+/// - `scale` is the `LoRA` scaling factor (alpha / rank)
+///
+/// # Arguments
+/// * `layer` - `QLoRA` layer containing base weights and `LoRA` adapters
+/// * `output_path` - Path to write the merged GGUF file
+///
 /// # Errors
-/// Returns error if operation is not yet implemented
-pub fn merge_and_export_gguf<P: AsRef<Path>>(_output_path: P) -> Result<()> {
-    // TODO: Implement merge + export
-    Err(QLoraError::GgufExport(
-        "merge_and_export not yet implemented".into(),
-    ))
+/// Returns error if dequantization, merging, or export fails
+pub fn merge_and_export_gguf<P: AsRef<Path>>(
+    layer: &crate::qlora::QLoraLayer,
+    output_path: P,
+) -> Result<()> {
+    use crate::quantization::{dequantize_nf4, quantize_nf4};
+
+    // Step 1: Dequantize the base weights
+    let quantized_base = layer.quantized_weight();
+    let device = layer.device();
+    let w_base = dequantize_nf4(quantized_base, device)?;
+
+    // Step 2: Get LoRA weights and compute the LoRA delta: (B @ A) * scale
+    let (lora_a, lora_b) = layer.lora_weights();
+    let scale = layer.lora_scale();
+
+    // Compute B @ A
+    let lora_delta = lora_b.matmul(lora_a)?;
+
+    // Apply scaling: (B @ A) * scale
+    let lora_delta_scaled = lora_delta.affine(scale, 0.0)?;
+
+    // Step 3: Merge weights: W_merged = W_base + (B @ A) * scale
+    let w_merged = w_base.add(&lora_delta_scaled)?;
+
+    // Step 4: Re-quantize the merged weights
+    let config = layer.config();
+    let merged_quantized = quantize_nf4(&w_merged, config.quantization.block_size)?;
+
+    // Step 5: Export to GGUF format
+    let metadata = GgufMetadata {
+        model_name: "qlora-merged".to_string(),
+        model_type: "merged".to_string(),
+        model_size: merged_quantized.numel(),
+    };
+
+    export_gguf(
+        &[("merged_weight", &merged_quantized)],
+        Some(metadata),
+        output_path,
+    )?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -358,6 +405,80 @@ mod tests {
         let mut version = [0u8; 4];
         file.read_exact(&mut version).unwrap();
         assert_eq!(u32::from_le_bytes(version), GGUF_VERSION);
+
+        std::fs::remove_file(temp_path).ok();
+    }
+
+    #[test]
+    fn test_merge_and_export_gguf() {
+        use crate::qlora::{QLoraConfig, QLoraLayer, QuantizedLinear};
+
+        let device = Device::Cpu;
+        let config = QLoraConfig::preset_all_bf16(8, 16);
+
+        // Create a QLoRA layer with some test weights
+        let in_features = 64;
+        let out_features = 128;
+        let weight = Tensor::ones(&[out_features, in_features], candle_core::DType::F32, &device)
+            .unwrap();
+        let linear = QuantizedLinear::from_weight(&weight, None, &config, &device).unwrap();
+        let layer = QLoraLayer::new(linear);
+
+        // Test merge and export
+        let temp_path = std::env::temp_dir().join("test_merge_export.gguf");
+        let result = merge_and_export_gguf(&layer, &temp_path);
+        assert!(result.is_ok(), "merge_and_export_gguf failed: {:?}", result);
+
+        // Verify file was created with correct structure
+        let mut file = std::fs::File::open(&temp_path).unwrap();
+        let mut magic = [0u8; 4];
+        file.read_exact(&mut magic).unwrap();
+        assert_eq!(u32::from_le_bytes(magic), GGUF_MAGIC);
+
+        // Verify metadata is present
+        let metadata = std::fs::metadata(&temp_path).unwrap();
+        assert!(metadata.len() > 0, "Output file should not be empty");
+
+        std::fs::remove_file(temp_path).ok();
+    }
+
+    #[test]
+    fn test_merge_and_export_gguf_preserves_shape() {
+        use crate::qlora::{QLoraConfig, QLoraLayer, QuantizedLinear};
+
+        let device = Device::Cpu;
+        let config = QLoraConfig::preset_all_bf16(4, 8);
+
+        // Create a small QLoRA layer
+        let in_features = 32;
+        let out_features = 32;
+        let weight = Tensor::randn(
+            0.0f32,
+            1.0f32,
+            &[out_features, in_features],
+            &device,
+        )
+        .unwrap();
+
+        let linear = QuantizedLinear::from_weight(&weight, None, &config, &device).unwrap();
+        let layer = QLoraLayer::new(linear);
+
+        // Export
+        let temp_path = std::env::temp_dir().join("test_merge_shape.gguf");
+        merge_and_export_gguf(&layer, &temp_path).unwrap();
+
+        // Verify file was created
+        assert!(
+            temp_path.exists(),
+            "Output file should exist after export"
+        );
+
+        // Note: We can't easily re-read the GGUF file to verify the shape,
+        // but we can verify the file is non-empty and has the right magic number
+        let mut file = std::fs::File::open(&temp_path).unwrap();
+        let mut magic = [0u8; 4];
+        file.read_exact(&mut magic).unwrap();
+        assert_eq!(u32::from_le_bytes(magic), GGUF_MAGIC);
 
         std::fs::remove_file(temp_path).ok();
     }

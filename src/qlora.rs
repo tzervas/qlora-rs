@@ -472,6 +472,40 @@ impl QLoraLayer {
     pub fn forward(&self, input: &Tensor) -> Result<Tensor> {
         self.linear.forward(input)
     }
+
+    /// Get a reference to the quantized base weight tensor.
+    #[must_use]
+    pub fn quantized_weight(&self) -> &QuantizedTensor {
+        &self.linear.quantized_weight
+    }
+
+    /// Get the `LoRA` A and B weight tensors.
+    ///
+    /// Returns (`lora_a`, `lora_b`) where:
+    /// - `lora_a` has shape `[r, in_features]`
+    /// - `lora_b` has shape `[out_features, r]`
+    #[must_use]
+    pub fn lora_weights(&self) -> (&Tensor, &Tensor) {
+        self.linear.lora_weights()
+    }
+
+    /// Get the `LoRA` scaling factor (alpha / rank).
+    #[must_use]
+    pub fn lora_scale(&self) -> f64 {
+        self.linear.config.scale()
+    }
+
+    /// Get the device used by this layer.
+    #[must_use]
+    pub fn device(&self) -> &Device {
+        &self.linear.device
+    }
+
+    /// Get the quantization configuration.
+    #[must_use]
+    pub fn config(&self) -> &QLoraConfig {
+        &self.linear.config
+    }
 }
 
 #[cfg(test)]

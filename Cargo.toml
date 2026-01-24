@@ -1,6 +1,6 @@
 [package]
 name = "qlora-rs"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.92"
 license = "MIT"
@@ -71,6 +71,18 @@ pedantic = "allow"
 [[bench]]
 name = "quantization"
 harness = false
+
+[[example]]
+name = "basic_quantization"
+path = "examples/basic_quantization.rs"
+
+[[example]]
+name = "qlora_inference"
+path = "examples/qlora_inference.rs"
+
+[[example]]
+name = "qlora_training"
+path = "examples/qlora_training.rs"
 
 # Optional: Uncomment to use local peft-rs for development
 # [patch."https://github.com/tzervas/peft-rs"]
