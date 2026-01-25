@@ -34,6 +34,8 @@
 pub mod error;
 pub mod export;
 pub mod formats;
+#[cfg(feature = "cuda")]
+pub mod kernels;
 pub mod native;
 pub mod qlora;
 pub mod quantization;
