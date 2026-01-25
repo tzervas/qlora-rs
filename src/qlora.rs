@@ -21,6 +21,17 @@ use crate::quantization::{
     dequantize_nf4, quantize_nf4_with_config, ComputeDType, QuantizationConfig, QuantizedTensor,
 };
 
+fn warn_cpu_fallback(device: &Device) {
+    static WARN_ONCE: std::sync::Once = std::sync::Once::new();
+    if matches!(device, Device::Cpu) {
+        WARN_ONCE.call_once(|| {
+            eprintln!(
+                "qlora-rs: CPU device in use. CUDA is the intended default; enable the 'cuda' feature and use Device::cuda_if_available(0) when possible."
+            );
+        });
+    }
+}
+
 /// Configuration for `QLoRA` training and inference.
 ///
 /// # Compute Dtype
@@ -247,6 +258,7 @@ impl QuantizedLinear {
         config: &QLoraConfig,
         device: &Device,
     ) -> Result<Self> {
+        warn_cpu_fallback(device);
         let shape = weight.shape().dims();
         if shape.len() != 2 {
             return Err(QLoraError::InvalidConfig("weight must be 2D".into()));
@@ -302,6 +314,7 @@ impl QuantizedLinear {
         }
         let (out_features, in_features) = (shape[0], shape[1]);
         let device = weight.device();
+        warn_cpu_fallback(device);
 
         // Quantize the base weight using full config
         let quantized_weight = quantize_nf4_with_config(weight, &config.quantization)?;
