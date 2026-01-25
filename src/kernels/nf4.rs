@@ -27,51 +27,51 @@ pub const NF4_BOUNDARIES: [f32; 15] = [
 /// Uses a series of comparisons (effectively binary search) to find
 /// the closest NF4 quantization level.
 #[cube]
-pub fn find_nearest_nf4<F: Float>(val: F) -> u32 {
+pub fn find_nearest_nf4<F: Float + CubeElement>(val: F) -> u32 {
     // Compare against boundaries to find the correct bin
     // Boundaries are midpoints between consecutive NF4 values
     // Using subtraction instead of negative literals for CubeCL compatibility
 
     // Boundary: -0.8481
     if val < F::new(0.0) - F::new(0.8481) {
-        0u32
+        0u32.into()
     } else if val < F::new(0.0) - F::new(0.6107) {
-        1u32
+        1u32.into()
     } else if val < F::new(0.0) - F::new(0.4600) {
-        2u32
+        2u32.into()
     } else if val < F::new(0.0) - F::new(0.3397) {
-        3u32
+        3u32.into()
     } else if val < F::new(0.0) - F::new(0.2346) {
-        4u32
+        4u32.into()
     } else if val < F::new(0.0) - F::new(0.1380) {
-        5u32
+        5u32.into()
     } else if val < F::new(0.0) - F::new(0.0456) {
-        6u32
+        6u32.into()
     } else if val < F::new(0.0398) {
-        7u32
+        7u32.into()
     } else if val < F::new(0.1203) {
-        8u32
+        8u32.into()
     } else if val < F::new(0.2035) {
-        9u32
+        9u32.into()
     } else if val < F::new(0.2920) {
-        10u32
+        10u32.into()
     } else if val < F::new(0.3893) {
-        11u32
+        11u32.into()
     } else if val < F::new(0.5017) {
-        12u32
+        12u32.into()
     } else if val < F::new(0.6428) {
-        13u32
+        13u32.into()
     } else if val < F::new(0.8615) {
-        14u32
+        14u32.into()
     } else {
-        15u32
+        15u32.into()
     }
 }
 
 /// NF4 lookup table function.
 /// Returns the dequantized value for a given 4-bit index.
 #[cube]
-pub fn nf4_lookup<F: Float>(idx: u32) -> F {
+pub fn nf4_lookup<F: Float + CubeElement>(idx: u32) -> F {
     // Using subtraction for negative values
     if idx == 0u32 {
         F::new(0.0) - F::new(1.0) // -1.0
@@ -120,7 +120,7 @@ pub fn nf4_lookup<F: Float>(idx: u32) -> F {
 /// * `block_size` - Number of elements per quantization block
 /// * `num_elements` - Total number of input elements
 #[cube(launch)]
-pub fn nf4_quantize_kernel<F: Float>(
+pub fn nf4_quantize_kernel<F: Float + CubeElement>(
     input: &Array<F>,
     scales: &Array<F>,
     output: &mut Array<u32>,
@@ -129,15 +129,15 @@ pub fn nf4_quantize_kernel<F: Float>(
 ) {
     // Each thread processes 8 input values and produces one packed u32
     let out_idx = ABSOLUTE_POS;
-    let in_base = out_idx * 8u32;
+    let in_base = out_idx * 8usize;
 
     // Early exit if out of bounds
-    if in_base >= num_elements {
-        return;
+    if in_base >= (num_elements as usize) {
+        terminate!();
     }
 
     // Determine which scale block this thread's values belong to
-    let scale_idx = in_base / block_size;
+    let scale_idx = in_base / (block_size as usize);
     let scale = scales[scale_idx];
 
     // Avoid division by zero
@@ -152,9 +152,9 @@ pub fn nf4_quantize_kernel<F: Float>(
 
     // Process 8 values and pack into one u32
     #[unroll]
-    for i in 0u32..8u32 {
+    for i in 0usize..8usize {
         let val_idx = in_base + i;
-        if val_idx < num_elements {
+        if val_idx < (num_elements as usize) {
             // Normalize value by scale
             let normalized = input[val_idx] * inv_scale;
 
@@ -171,7 +171,7 @@ pub fn nf4_quantize_kernel<F: Float>(
             let nf4_idx = find_nearest_nf4::<F>(clamped);
 
             // Pack 4-bit index into u32 (LSB first)
-            packed = packed | (nf4_idx << (i * 4u32));
+            packed = packed | (nf4_idx << ((i * 4usize) as u32));
         }
     }
 
@@ -189,7 +189,7 @@ pub fn nf4_quantize_kernel<F: Float>(
 /// * `block_size` - Number of elements per quantization block
 /// * `num_elements` - Total number of output elements
 #[cube(launch)]
-pub fn nf4_dequantize_kernel<F: Float>(
+pub fn nf4_dequantize_kernel<F: Float + CubeElement>(
     input: &Array<u32>,
     scales: &Array<F>,
     output: &mut Array<F>,
@@ -198,23 +198,23 @@ pub fn nf4_dequantize_kernel<F: Float>(
 ) {
     let idx = ABSOLUTE_POS;
 
-    if idx >= num_elements {
-        return;
+    if idx >= (num_elements as usize) {
+        terminate!();
     }
 
     // Calculate which packed u32 contains this value
-    let packed_idx = idx / 8u32;
-    let sub_idx = idx % 8u32;
+    let packed_idx = idx / 8usize;
+    let sub_idx = idx % 8usize;
 
     // Extract the 4-bit NF4 index
     let packed = input[packed_idx];
-    let nf4_idx = (packed >> (sub_idx * 4u32)) & 0xFu32;
+    let nf4_idx = (packed >> ((sub_idx * 4usize) as u32)) & 0xFu32;
 
     // Lookup NF4 value
     let nf4_val: F = nf4_lookup::<F>(nf4_idx);
 
     // Apply scale factor
-    let scale_idx = idx / block_size;
+    let scale_idx = idx / (block_size as usize);
     let scale = scales[scale_idx];
 
     output[idx] = nf4_val * scale;
@@ -225,7 +225,7 @@ pub fn nf4_dequantize_kernel<F: Float>(
 /// This kernel computes the absolute maximum value in each block,
 /// which is used as the scale factor for quantization.
 #[cube(launch)]
-pub fn compute_scales_kernel<F: Float>(
+pub fn compute_scales_kernel<F: Float + CubeElement>(
     input: &Array<F>,
     scales: &mut Array<F>,
     #[comptime] block_size: u32,
@@ -233,12 +233,12 @@ pub fn compute_scales_kernel<F: Float>(
 ) {
     let block_idx = ABSOLUTE_POS;
 
-    if block_idx >= num_blocks {
-        return;
+    if block_idx >= (num_blocks as usize) {
+        terminate!();
     }
 
-    let start = block_idx * block_size;
-    let end = start + block_size;
+    let start = block_idx * (block_size as usize);
+    let end = start + (block_size as usize);
 
     // Find absmax in this block
     let mut absmax = F::new(0.0);
@@ -276,7 +276,7 @@ pub fn compute_scales_kernel<F: Float>(
 /// * `num_blocks` - Total number of blocks
 /// * `blocks_per_superblock` - Number of blocks in each superblock
 #[cube(launch)]
-pub fn double_quantize_scales_kernel<F: Float>(
+pub fn double_quantize_scales_kernel<F: Float + CubeElement>(
     scales: &Array<F>,
     quantized_scales: &mut Array<u32>,
     scale_of_scales: &mut Array<F>,
@@ -284,31 +284,28 @@ pub fn double_quantize_scales_kernel<F: Float>(
     #[comptime] blocks_per_superblock: u32,
 ) {
     let superblock_idx = ABSOLUTE_POS;
-    let num_superblocks = (num_blocks + blocks_per_superblock - 1u32) / blocks_per_superblock;
+    let num_superblocks_u32 = (num_blocks + blocks_per_superblock - 1u32) / blocks_per_superblock;
 
-    if superblock_idx >= num_superblocks {
-        return;
+    if superblock_idx >= (num_superblocks_u32 as usize) {
+        terminate!();
     }
 
-    let start = superblock_idx * blocks_per_superblock;
-    let end_raw = start + blocks_per_superblock;
-    let end = if end_raw > num_blocks {
-        num_blocks
-    } else {
-        end_raw
-    };
+    let start = superblock_idx * (blocks_per_superblock as usize);
 
-    // Find absmax of scales in this superblock
+    // Find absmax of scales in this superblock using comptime bound
     let mut absmax = F::new(0.0);
-    for i in start..end {
-        let val = scales[i];
-        let abs_val = if val < F::new(0.0) {
-            F::new(0.0) - val
-        } else {
-            val
-        };
-        if abs_val > absmax {
-            absmax = abs_val;
+    for i in 0u32..blocks_per_superblock {
+        let idx = start + (i as usize);
+        if idx < (num_blocks as usize) {
+            let val = scales[idx];
+            let abs_val = if val < F::new(0.0) {
+                F::new(0.0) - val
+            } else {
+                val
+            };
+            if abs_val > absmax {
+                absmax = abs_val;
+            }
         }
     }
 
@@ -323,18 +320,18 @@ pub fn double_quantize_scales_kernel<F: Float>(
     // Quantize scales to 8-bit (symmetric around 0, range [-127, 127])
     let inv_sos = F::new(127.0) / sos;
 
-    // Pack 4 quantized scales per u32
-    let scales_per_superblock = end - start;
-    let packed_count = (scales_per_superblock + 3u32) / 4u32;
-    let output_base = superblock_idx * ((blocks_per_superblock + 3u32) / 4u32);
+    // Calculate output_base using u32 arithmetic then cast
+    let packed_blocks_u32 = (blocks_per_superblock + 3u32) / 4u32;
+    let output_base = superblock_idx * (packed_blocks_u32 as usize);
 
-    for p in 0u32..packed_count {
+    // Pack 4 quantized scales per u32 using comptime bound
+    for p in 0u32..packed_blocks_u32 {
         let mut packed: u32 = 0u32;
 
         #[unroll]
         for j in 0u32..4u32 {
-            let idx = start + p * 4u32 + j;
-            if idx < end {
+            let idx = start + ((p * 4u32 + j) as usize);
+            if idx < (num_blocks as usize) {
                 // Quantize to [-127, 127]
                 let q_float = scales[idx] * inv_sos;
 
@@ -363,7 +360,7 @@ pub fn double_quantize_scales_kernel<F: Float>(
             }
         }
 
-        quantized_scales[output_base + p] = packed;
+        quantized_scales[(output_base + (p as usize))] = packed;
     }
 }
 
@@ -371,7 +368,7 @@ pub fn double_quantize_scales_kernel<F: Float>(
 ///
 /// Reconstructs the original scales from their quantized representation.
 #[cube(launch)]
-pub fn double_dequantize_scales_kernel<F: Float>(
+pub fn double_dequantize_scales_kernel<F: Float + CubeElement>(
     quantized_scales: &Array<u32>,
     scale_of_scales: &Array<F>,
     scales: &mut Array<F>,
@@ -380,24 +377,24 @@ pub fn double_dequantize_scales_kernel<F: Float>(
 ) {
     let block_idx = ABSOLUTE_POS;
 
-    if block_idx >= num_blocks {
-        return;
+    if block_idx >= (num_blocks as usize) {
+        terminate!();
     }
 
     // Determine which superblock and position within it
-    let superblock_idx = block_idx / blocks_per_superblock;
-    let local_idx = block_idx % blocks_per_superblock;
+    let superblock_idx = block_idx / (blocks_per_superblock as usize);
+    let local_idx = block_idx % (blocks_per_superblock as usize);
 
     // Get scale of scales for this superblock
     let sos = scale_of_scales[superblock_idx];
 
     // Find packed u32 containing this scale
-    let packed_per_superblock = (blocks_per_superblock + 3u32) / 4u32;
-    let packed_idx = superblock_idx * packed_per_superblock + local_idx / 4u32;
-    let sub_idx = local_idx % 4u32;
+    let packed_per_superblock = ((blocks_per_superblock as usize) + 3usize) / 4usize;
+    let packed_idx = superblock_idx * packed_per_superblock + local_idx / 4usize;
+    let sub_idx = local_idx % 4usize;
 
     let packed = quantized_scales[packed_idx];
-    let q_u8 = (packed >> (sub_idx * 8u32)) & 0xFFu32;
+    let q_u8 = (packed >> ((sub_idx * 8usize) as u32)) & 0xFFu32;
 
     // Dequantize: convert from [0, 254] back to [-127, 127], then scale
     let q_signed = (q_u8 as i32) - 127;
@@ -410,7 +407,7 @@ pub fn double_dequantize_scales_kernel<F: Float>(
 ///
 /// Combines scale dequantization and NF4 dequantization in a single pass.
 #[cube(launch)]
-pub fn nf4_dequantize_double_quant_kernel<F: Float>(
+pub fn nf4_dequantize_double_quant_kernel<F: Float + CubeElement>(
     input: &Array<u32>,
     quantized_scales: &Array<u32>,
     scale_of_scales: &Array<F>,
@@ -421,29 +418,29 @@ pub fn nf4_dequantize_double_quant_kernel<F: Float>(
 ) {
     let idx = ABSOLUTE_POS;
 
-    if idx >= num_elements {
-        return;
+    if idx >= (num_elements as usize) {
+        terminate!();
     }
 
     // Get NF4 value
-    let packed_idx = idx / 8u32;
-    let sub_idx = idx % 8u32;
+    let packed_idx = idx / 8usize;
+    let sub_idx = idx % 8usize;
     let packed = input[packed_idx];
-    let nf4_idx = (packed >> (sub_idx * 4u32)) & 0xFu32;
+    let nf4_idx = (packed >> ((sub_idx * 4usize) as u32)) & 0xFu32;
     let nf4_val: F = nf4_lookup::<F>(nf4_idx);
 
     // Get dequantized scale
-    let block_idx = idx / block_size;
-    let superblock_idx = block_idx / blocks_per_superblock;
-    let local_block_idx = block_idx % blocks_per_superblock;
+    let block_idx = idx / (block_size as usize);
+    let superblock_idx = block_idx / (blocks_per_superblock as usize);
+    let local_block_idx = block_idx % (blocks_per_superblock as usize);
 
     let sos = scale_of_scales[superblock_idx];
-    let packed_per_superblock = (blocks_per_superblock + 3u32) / 4u32;
-    let scale_packed_idx = superblock_idx * packed_per_superblock + local_block_idx / 4u32;
-    let scale_sub_idx = local_block_idx % 4u32;
+    let packed_per_superblock = ((blocks_per_superblock as usize) + 3usize) / 4usize;
+    let scale_packed_idx_u32 = superblock_idx * packed_per_superblock + local_block_idx / 4usize;
+    let scale_sub_idx_u32 = local_block_idx % 4usize;
 
-    let scale_packed = quantized_scales[scale_packed_idx];
-    let q_u8 = (scale_packed >> (scale_sub_idx * 8u32)) & 0xFFu32;
+    let scale_packed = quantized_scales[scale_packed_idx_u32];
+    let q_u8 = (scale_packed >> ((scale_sub_idx_u32 * 8usize) as u32)) & 0xFFu32;
     let q_signed = (q_u8 as i32) - 127;
     let scale = F::cast_from(q_signed) * sos / F::new(127.0);
 
