@@ -108,7 +108,9 @@ pub fn fused_nf4_matmul_kernel<F: Float + CubeElement>(
         if row < m as u32 && col < n as u32 {
             #[unroll]
             for i in 0u32..TILE_SIZE {
-                acc = acc + x_tile[(UNIT_POS_Y * TILE_SIZE + i) as usize] * w_tile[(i * TILE_SIZE + UNIT_POS_X) as usize];
+                acc = acc
+                    + x_tile[(UNIT_POS_Y * TILE_SIZE + i) as usize]
+                        * w_tile[(i * TILE_SIZE + UNIT_POS_X) as usize];
             }
         }
 
@@ -194,7 +196,9 @@ pub fn fused_nf4_batched_matmul_kernel<F: Float + CubeElement>(
         if row < m as u32 && col < n as u32 {
             #[unroll]
             for i in 0u32..TILE_SIZE {
-                acc = acc + x_tile[(UNIT_POS_Y * TILE_SIZE + i) as usize] * w_tile[(i * TILE_SIZE + UNIT_POS_X) as usize];
+                acc = acc
+                    + x_tile[(UNIT_POS_Y * TILE_SIZE + i) as usize]
+                        * w_tile[(i * TILE_SIZE + UNIT_POS_X) as usize];
             }
         }
 
@@ -304,34 +308,38 @@ pub fn fused_nf4_matmul_bias_act_kernel<F: Float + CubeElement>(
 
         let x_row = CUBE_POS_Y * TILE_SIZE + UNIT_POS_Y;
         let x_col = k_base + UNIT_POS_X;
-        x_tile[(UNIT_POS_Y * TILE_SIZE + UNIT_POS_X) as usize] = if x_row < m as u32 && x_col < k as u32 {
-            x[(x_row * k + x_col) as usize]
-        } else {
-            F::new(0.0)
-        };
+        x_tile[(UNIT_POS_Y * TILE_SIZE + UNIT_POS_X) as usize] =
+            if x_row < m as u32 && x_col < k as u32 {
+                x[(x_row * k + x_col) as usize]
+            } else {
+                F::new(0.0)
+            };
 
         let w_row = k_base + UNIT_POS_Y;
         let w_col = CUBE_POS_X * TILE_SIZE + UNIT_POS_X;
-        w_tile[(UNIT_POS_Y * TILE_SIZE + UNIT_POS_X) as usize] = if w_row < k as u32 && w_col < n as u32 {
-            let packed_k_idx = w_row / 8u32;
-            let sub_idx = w_row % 8u32;
-            let packed_idx = packed_k_idx * n + w_col;
-            let packed = w_packed[packed_idx as usize];
-            let nf4_idx = (packed >> (sub_idx * 4u32)) & 0xFu32;
-            let nf4_val: F = nf4_lookup::<F>(nf4_idx);
-            let weight_idx = w_row * n + w_col;
-            let scale_idx = weight_idx / block_size;
-            nf4_val * scales[scale_idx as usize]
-        } else {
-            F::new(0.0)
-        };
+        w_tile[(UNIT_POS_Y * TILE_SIZE + UNIT_POS_X) as usize] =
+            if w_row < k as u32 && w_col < n as u32 {
+                let packed_k_idx = w_row / 8u32;
+                let sub_idx = w_row % 8u32;
+                let packed_idx = packed_k_idx * n + w_col;
+                let packed = w_packed[packed_idx as usize];
+                let nf4_idx = (packed >> (sub_idx * 4u32)) & 0xFu32;
+                let nf4_val: F = nf4_lookup::<F>(nf4_idx);
+                let weight_idx = w_row * n + w_col;
+                let scale_idx = weight_idx / block_size;
+                nf4_val * scales[scale_idx as usize]
+            } else {
+                F::new(0.0)
+            };
 
         sync_cube();
 
         if row < m as u32 && col < n as u32 {
             #[unroll]
             for i in 0u32..TILE_SIZE {
-                acc = acc + x_tile[(UNIT_POS_Y * TILE_SIZE + i) as usize] * w_tile[(i * TILE_SIZE + UNIT_POS_X) as usize];
+                acc = acc
+                    + x_tile[(UNIT_POS_Y * TILE_SIZE + i) as usize]
+                        * w_tile[(i * TILE_SIZE + UNIT_POS_X) as usize];
             }
         }
 

@@ -29,8 +29,14 @@ fn main() -> Result<()> {
     println!("QLoRA Configuration:");
     println!("  LoRA rank: {}", lora_rank);
     println!("  LoRA alpha: {}", lora_alpha);
-    println!("  Quantization block size: {}", config.quantization.block_size);
-    println!("  Double quantization: {}", config.quantization.double_quant);
+    println!(
+        "  Quantization block size: {}",
+        config.quantization.block_size
+    );
+    println!(
+        "  Double quantization: {}",
+        config.quantization.double_quant
+    );
     println!("  Compute dtype: {:?}\n", config.quantization.compute_dtype);
 
     // Define layer dimensions (typical for attention Q/V projection)
@@ -60,12 +66,27 @@ fn main() -> Result<()> {
     let total_size = quantized_size + lora_a_size + lora_b_size;
 
     println!("Memory Usage:");
-    println!("  Original weight (f32): {:.2} MB", base_weight_size as f64 / 1024.0 / 1024.0);
-    println!("  Quantized base: {:.2} MB", quantized_size as f64 / 1024.0 / 1024.0);
-    println!("  LoRA A matrix: {:.2} MB", lora_a_size as f64 / 1024.0 / 1024.0);
-    println!("  LoRA B matrix: {:.2} MB", lora_b_size as f64 / 1024.0 / 1024.0);
+    println!(
+        "  Original weight (f32): {:.2} MB",
+        base_weight_size as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "  Quantized base: {:.2} MB",
+        quantized_size as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "  LoRA A matrix: {:.2} MB",
+        lora_a_size as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "  LoRA B matrix: {:.2} MB",
+        lora_b_size as f64 / 1024.0 / 1024.0
+    );
     println!("  Total: {:.2} MB", total_size as f64 / 1024.0 / 1024.0);
-    println!("  Memory savings: {:.1}x\n", base_weight_size as f64 / total_size as f64);
+    println!(
+        "  Memory savings: {:.1}x\n",
+        base_weight_size as f64 / total_size as f64
+    );
 
     // Create sample input (batch of embeddings)
     let batch_size = 4;
@@ -119,9 +140,18 @@ fn main() -> Result<()> {
 
     println!("=== Summary ===");
     println!("Successfully created a QLoRA layer with:");
-    println!("  - 4-bit quantized base weights ({:.2} MB)", quantized_size as f64 / 1024.0 / 1024.0);
-    println!("  - Full-precision LoRA adapters ({:.2} MB)", (lora_a_size + lora_b_size) as f64 / 1024.0 / 1024.0);
-    println!("  - {:.1}x memory reduction vs. full precision", base_weight_size as f64 / total_size as f64);
+    println!(
+        "  - 4-bit quantized base weights ({:.2} MB)",
+        quantized_size as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "  - Full-precision LoRA adapters ({:.2} MB)",
+        (lora_a_size + lora_b_size) as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "  - {:.1}x memory reduction vs. full precision",
+        base_weight_size as f64 / total_size as f64
+    );
     println!("\nThis layer is ready for:");
     println!("  - Inference with the quantized base model");
     println!("  - Fine-tuning by training only the LoRA adapters");

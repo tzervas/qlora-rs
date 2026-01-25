@@ -419,8 +419,12 @@ mod tests {
         // Create a QLoRA layer with some test weights
         let in_features = 64;
         let out_features = 128;
-        let weight = Tensor::ones(&[out_features, in_features], candle_core::DType::F32, &device)
-            .unwrap();
+        let weight = Tensor::ones(
+            &[out_features, in_features],
+            candle_core::DType::F32,
+            &device,
+        )
+        .unwrap();
         let linear = QuantizedLinear::from_weight(&weight, None, &config, &device).unwrap();
         let layer = QLoraLayer::new(linear);
 
@@ -452,13 +456,7 @@ mod tests {
         // Create a small QLoRA layer
         let in_features = 32;
         let out_features = 32;
-        let weight = Tensor::randn(
-            0.0f32,
-            1.0f32,
-            &[out_features, in_features],
-            &device,
-        )
-        .unwrap();
+        let weight = Tensor::randn(0.0f32, 1.0f32, &[out_features, in_features], &device).unwrap();
 
         let linear = QuantizedLinear::from_weight(&weight, None, &config, &device).unwrap();
         let layer = QLoraLayer::new(linear);
@@ -468,10 +466,7 @@ mod tests {
         merge_and_export_gguf(&layer, &temp_path).unwrap();
 
         // Verify file was created
-        assert!(
-            temp_path.exists(),
-            "Output file should exist after export"
-        );
+        assert!(temp_path.exists(), "Output file should exist after export");
 
         // Note: We can't easily re-read the GGUF file to verify the shape,
         // but we can verify the file is non-empty and has the right magic number

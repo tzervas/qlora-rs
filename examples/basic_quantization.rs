@@ -30,7 +30,11 @@ fn main() -> Result<()> {
     // Calculate original size in bytes (f32 = 4 bytes per element)
     let numel = shape.0 * shape.1;
     let original_size_bytes = numel * 4;
-    println!("Original size: {} bytes ({:.2} MB)\n", original_size_bytes, original_size_bytes as f64 / 1024.0 / 1024.0);
+    println!(
+        "Original size: {} bytes ({:.2} MB)\n",
+        original_size_bytes,
+        original_size_bytes as f64 / 1024.0 / 1024.0
+    );
 
     // Quantize to NF4 format
     // Block size of 64 is recommended - balances accuracy vs compression
@@ -44,8 +48,15 @@ fn main() -> Result<()> {
     let data_size_bytes = numel / 2; // 4 bits per element = 0.5 bytes
     let scales_size_bytes = num_blocks * 4; // f32 scale per block
     let quantized_size_bytes = data_size_bytes + scales_size_bytes;
-    println!("Quantized size: {} bytes ({:.2} MB)", quantized_size_bytes, quantized_size_bytes as f64 / 1024.0 / 1024.0);
-    println!("Compression ratio: {:.2}x\n", original_size_bytes as f64 / quantized_size_bytes as f64);
+    println!(
+        "Quantized size: {} bytes ({:.2} MB)",
+        quantized_size_bytes,
+        quantized_size_bytes as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "Compression ratio: {:.2}x\n",
+        original_size_bytes as f64 / quantized_size_bytes as f64
+    );
 
     // Dequantize back to full precision
     println!("Dequantizing back to f32...");
@@ -77,8 +88,15 @@ fn main() -> Result<()> {
     println!("Signal-to-Noise Ratio (SNR): {:.2} dB\n", snr_db);
 
     println!("=== Summary ===");
-    println!("NF4 quantization achieved {:.2}x compression", original_size_bytes as f64 / quantized_size_bytes as f64);
-    println!("with RMSE of {:.6} ({:.4}% relative error)", rmse, (rmse / signal_power.sqrt()) * 100.0);
+    println!(
+        "NF4 quantization achieved {:.2}x compression",
+        original_size_bytes as f64 / quantized_size_bytes as f64
+    );
+    println!(
+        "with RMSE of {:.6} ({:.4}% relative error)",
+        rmse,
+        (rmse / signal_power.sqrt()) * 100.0
+    );
     println!("\nThis low error rate makes NF4 suitable for storing frozen base model weights");
     println!("in QLoRA, where we only train small LoRA adapters in full precision.");
 

@@ -32,11 +32,26 @@ fn main() -> Result<()> {
     };
 
     println!("Training Configuration:");
-    println!("  Learning rate: {}", training_config.adapter_config.learning_rate);
-    println!("  Weight decay: {}", training_config.adapter_config.weight_decay);
-    println!("  Gradient accumulation steps: {}", training_config.adapter_config.gradient_accumulation_steps);
-    println!("  Max gradient norm: {:?}", training_config.adapter_config.max_grad_norm);
-    println!("  Paged optimizer: {}\n", training_config.use_paged_optimizer);
+    println!(
+        "  Learning rate: {}",
+        training_config.adapter_config.learning_rate
+    );
+    println!(
+        "  Weight decay: {}",
+        training_config.adapter_config.weight_decay
+    );
+    println!(
+        "  Gradient accumulation steps: {}",
+        training_config.adapter_config.gradient_accumulation_steps
+    );
+    println!(
+        "  Max gradient norm: {:?}",
+        training_config.adapter_config.max_grad_norm
+    );
+    println!(
+        "  Paged optimizer: {}\n",
+        training_config.use_paged_optimizer
+    );
 
     // Create QLoRA trainer
     let mut trainer = QLoraTrainer::new(training_config.clone(), device.clone());
@@ -50,26 +65,27 @@ fn main() -> Result<()> {
     println!("QLoRA Layer Configuration:");
     println!("  LoRA rank: {}", lora_rank);
     println!("  LoRA alpha: {}", lora_alpha);
-    println!("  Quantization block size: {}\n", qlora_config.quantization.block_size);
+    println!(
+        "  Quantization block size: {}\n",
+        qlora_config.quantization.block_size
+    );
 
     // Define layer dimensions
     let in_features = 256;
     let out_features = 256;
 
     // Create a random weight tensor (simulating pre-trained model weights)
-    println!("Initializing layer with dimensions {}x{}...", out_features, in_features);
+    println!(
+        "Initializing layer with dimensions {}x{}...",
+        out_features, in_features
+    );
     let weight = Tensor::randn(0.0f32, 1.0f32, (out_features, in_features), &device)?;
 
     // IMPORTANT: Create layer using trainer's VarBuilder for gradient tracking
     // This registers the LoRA parameters in the trainer's VarMap
     let layer = {
         let vb = trainer.var_builder();
-        QuantizedLinear::from_weight_with_varbuilder(
-            &weight,
-            None,
-            &qlora_config,
-            vb.pp("layer0"),
-        )?
+        QuantizedLinear::from_weight_with_varbuilder(&weight, None, &qlora_config, vb.pp("layer0"))?
     };
     println!("Layer created with VarBuilder (parameters registered for training)\n");
 
@@ -106,7 +122,11 @@ fn main() -> Result<()> {
 
         // Forward pass
         let output = layer.forward(&input)?;
-        println!("  Forward pass: {:?} -> {:?}", input.shape(), output.shape());
+        println!(
+            "  Forward pass: {:?} -> {:?}",
+            input.shape(),
+            output.shape()
+        );
 
         // Reshape output for loss calculation
         // From (batch, seq, features) to (batch * seq, features)
@@ -134,7 +154,10 @@ fn main() -> Result<()> {
         // Report metrics
         println!("  Metrics:");
         println!("    - Loss: {:.6}", loss_value);
-        println!("    - Learning rate: {}", training_config.adapter_config.learning_rate);
+        println!(
+            "    - Learning rate: {}",
+            training_config.adapter_config.learning_rate
+        );
 
         // Check LoRA weight changes (in real training, these would update)
         let (lora_a, lora_b) = layer.lora_weights();
