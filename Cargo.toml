@@ -1,6 +1,6 @@
 [package]
 name = "qlora-rs"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 rust-version = "1.92"
 license = "MIT"
@@ -21,13 +21,13 @@ exclude = [
 ]
 
 [dependencies]
-candle-core = { workspace = true }
-candle-nn = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-tracing = { workspace = true }
-anyhow = { workspace = true }
+candle-core = "0.9"
+candle-nn = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+anyhow = "1.0"
 
 # peft-rs dependency - published version includes required weights() methods
 peft-rs = "1.0"
@@ -37,15 +37,15 @@ byteorder = "1.5"
 memmap2 = "0.9"
 
 # GPU support via CubeCL (optional)
-cubecl = { workspace = true, optional = true }
-cubecl-cuda = { workspace = true, optional = true }
+cubecl = { version = "0.9", optional = true }
+cubecl-cuda = { version = "0.9", optional = true }
 
 [dev-dependencies]
-criterion = { workspace = true }
+criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.4"
 tempfile = "3.8"
 approx = "0.5"
-tokio = { workspace = true }
+tokio = { version = "1.0", features = ["full"] }
 
 [features]
 default = []
