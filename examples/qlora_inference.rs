@@ -8,7 +8,8 @@
 //! This example shows how QLoRA combines:
 //! 1. Frozen quantized base weights (4-bit NF4)
 //! 2. Trainable LoRA adapters (full precision)
-//! for memory-efficient inference and fine-tuning.
+//!
+//! This enables memory-efficient inference and fine-tuning.
 
 use anyhow::Result;
 use candle_core::{Device, Tensor};
