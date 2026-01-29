@@ -431,7 +431,7 @@ mod tests {
         // Test merge and export
         let temp_path = std::env::temp_dir().join("test_merge_export.gguf");
         let result = merge_and_export_gguf(&layer, &temp_path);
-        assert!(result.is_ok(), "merge_and_export_gguf failed: {:?}", result);
+        assert!(result.is_ok(), "merge_and_export_gguf failed: {result:?}");
 
         // Verify file was created with correct structure
         let mut file = std::fs::File::open(&temp_path).unwrap();

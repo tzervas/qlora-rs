@@ -44,7 +44,7 @@ fn main() -> Result<()> {
 
     // Calculate quantized size
     // Each element uses 4 bits (0.5 bytes) + overhead for scales
-    let num_blocks = (numel + block_size - 1) / block_size;
+    let num_blocks = numel.div_ceil(block_size);
     let data_size_bytes = numel / 2; // 4 bits per element = 0.5 bytes
     let scales_size_bytes = num_blocks * 4; // f32 scale per block
     let quantized_size_bytes = data_size_bytes + scales_size_bytes;

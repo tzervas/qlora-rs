@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-01-28
+
+### Fixed
+- Fixed clippy warnings for Rust 1.93+ (`manual_div_ceil`, `uninlined_format_args`)
+- Now passes clippy with `-D warnings`
+
 ## [1.0.3] - 2026-01-28
 
 ### Fixed
